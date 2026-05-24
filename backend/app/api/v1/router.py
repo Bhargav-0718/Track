@@ -3,7 +3,7 @@ v1 API router — aggregates all route modules.
 """
 from fastapi import APIRouter
 
-from app.api.v1 import analytics, checkpoints, food_logs, reports, users, workout_logs
+from app.api.v1 import activity, analytics, checkpoints, food_logs, reports, users, workout_logs
 
 api_router = APIRouter()
 
@@ -24,3 +24,6 @@ api_router.include_router(reports.router)
 
 # Behavioral Analytics (Phase 4)
 api_router.include_router(analytics.router)
+
+# Activity — daily step logs
+api_router.include_router(activity.router)

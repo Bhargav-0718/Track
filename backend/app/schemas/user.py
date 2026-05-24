@@ -41,12 +41,14 @@ class UserUpdate(TrackBaseSchema):
     age: int | None = Field(default=None, ge=10, le=120)
     height_cm: float | None = Field(default=None, ge=50.0, le=300.0)
     weight_kg: float | None = Field(default=None, ge=20.0, le=500.0)
+    gender: str | None = Field(default=None, pattern="^(male|female|other)$")
     activity_level: ActivityLevel | None = None
     goal: FitnessGoal | None = None
     target_calories: float | None = Field(default=None, ge=500.0, le=10000.0)
     target_protein_g: float | None = Field(default=None, ge=0.0, le=1000.0)
     target_carbs_g: float | None = Field(default=None, ge=0.0, le=2000.0)
     target_fat_g: float | None = Field(default=None, ge=0.0, le=500.0)
+    daily_steps_target: int | None = Field(default=None, ge=1000, le=100000)
 
 
 class UserTargetsUpdate(TrackBaseSchema):
@@ -68,12 +70,14 @@ class UserProfile(TrackBaseSchema):
     age: int | None
     height_cm: float | None
     weight_kg: float | None
+    gender: str | None
     activity_level: str
     goal: str
     target_calories: float | None
     target_protein_g: float | None
     target_carbs_g: float | None
     target_fat_g: float | None
+    daily_steps_target: int | None
     is_active: bool
 
 

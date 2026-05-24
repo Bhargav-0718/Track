@@ -13,6 +13,8 @@ export interface User {
   age: number | null;
   height_cm: number | null;
   weight_kg: number | null;
+  gender: "male" | "female" | "other" | null;
+  daily_steps_target: number | null;
   activity_level: "sedentary" | "light" | "moderate" | "active" | "very_active";
   goal: "lose_weight" | "maintain" | "gain_muscle" | "improve_fitness";
   target_calories: number | null;
@@ -21,6 +23,21 @@ export interface User {
   target_fat_g: number | null;
   is_active: boolean;
   created_at: string;
+}
+
+// ── Activity / Step Logs ───────────────────────────────────────────────────────
+
+export interface StepLog {
+  id: string;
+  date: string;          // "YYYY-MM-DD"
+  steps: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepHistoryResponse {
+  items: StepLog[];
+  total: number;
 }
 
 // ── Food Logs ─────────────────────────────────────────────────────────────────

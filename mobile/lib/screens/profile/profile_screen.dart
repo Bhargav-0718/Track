@@ -25,8 +25,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   late TextEditingController _weightCtrl;
   late TextEditingController _caloriesCtrl;
   late TextEditingController _proteinCtrl;
+  late TextEditingController _stepsTargetCtrl;
   late ActivityLevel _activity;
   late Goal _goal;
+  String? _gender;
 
   @override
   void initState() {
@@ -38,8 +40,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     _weightCtrl = TextEditingController(text: user?.weightKg?.toStringAsFixed(1) ?? '');
     _caloriesCtrl = TextEditingController(text: user?.targetCalories?.toString() ?? '');
     _proteinCtrl = TextEditingController(text: user?.targetProteinG?.toStringAsFixed(0) ?? '');
+    _stepsTargetCtrl = TextEditingController(text: (user?.dailyStepsTarget ?? 10000).toString());
     _activity = user?.activityLevel ?? ActivityLevel.moderate;
     _goal = user?.goal ?? Goal.maintain;
+    _gender = user?.gender;
   }
 
   @override
@@ -50,6 +54,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     _weightCtrl.dispose();
     _caloriesCtrl.dispose();
     _proteinCtrl.dispose();
+    _stepsTargetCtrl.dispose();
     super.dispose();
   }
 
@@ -63,6 +68,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         if (_weightCtrl.text.isNotEmpty) 'weight_kg': double.tryParse(_weightCtrl.text),
         if (_caloriesCtrl.text.isNotEmpty) 'target_calories': int.tryParse(_caloriesCtrl.text),
         if (_proteinCtrl.text.isNotEmpty) 'target_protein_g': double.tryParse(_proteinCtrl.text),
+        if (_stepsTargetCtrl.text.isNotEmpty) 'daily_steps_target': int.tryParse(_stepsTargetCtrl.text),
+        if (_gender != null) 'gender': _gender,
         'activity_level': _activity.value,
         'goal': _goal.value,
       });
@@ -269,6 +276,40 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               }),
               const SizedBox(height: 24),
 
+              // ── Gender (for BMR accuracy) ────────────────────────────────
+              _SectionHeader('Gender'),
+              const SizedBox(height: 10),
+              Row(
+                children: ['male', 'female', 'other'].map((g) {
+                  final sel = _gender == g;
+                  return Expanded(
+                    child: GestureDetector(
+                      onTap: _editing ? () { setState(() => _gender = g); _markDirty(); } : null,
+                      child: AnimatedContainer(
+                        duration: 150.ms,
+                        margin: EdgeInsets.only(right: g != 'other' ? 8 : 0),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        decoration: BoxDecoration(
+                          color: sel ? AppColors.blue.withAlpha(30) : AppColors.surface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: sel ? AppColors.blue : AppColors.border),
+                        ),
+                        child: Text(
+                          g[0].toUpperCase() + g.substring(1),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: sel ? AppColors.blue : AppColors.textSecondary,
+                            fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ).animate().fadeIn(delay: 175.ms, duration: 400.ms),
+              const SizedBox(height: 24),
+
               // ── Nutrition targets ────────────────────────────────────────
               _SectionHeader('Nutrition Targets'),
               const SizedBox(height: 10),
@@ -289,6 +330,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       label: 'Protein',
                       ctrl: _proteinCtrl,
                       suffix: 'g',
+                      editable: _editing,
+                      onChanged: _markDirty,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _StatField(
+                      label: 'Steps Goal',
+                      ctrl: _stepsTargetCtrl,
+                      suffix: 'steps',
                       editable: _editing,
                       onChanged: _markDirty,
                     ),

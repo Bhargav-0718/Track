@@ -163,6 +163,8 @@ export default function ProfilePage() {
   const [age, setAge] = useState(user?.age?.toString() ?? "");
   const [heightCm, setHeightCm] = useState(user?.height_cm?.toString() ?? "");
   const [weightKg, setWeightKg] = useState(user?.weight_kg?.toString() ?? "");
+  const [gender, setGender] = useState<string>(user?.gender ?? "");
+  const [stepsTarget, setStepsTarget] = useState((user?.daily_steps_target ?? 10000).toString());
   const [targetCalories, setTargetCalories] = useState(user?.target_calories?.toString() ?? "");
   const [targetProtein, setTargetProtein] = useState(user?.target_protein_g?.toString() ?? "");
   const [targetCarbs, setTargetCarbs] = useState(user?.target_carbs_g?.toString() ?? "");
@@ -190,6 +192,8 @@ export default function ProfilePage() {
     age !== (user?.age?.toString() ?? "") ||
     heightCm !== (user?.height_cm?.toString() ?? "") ||
     weightKg !== (user?.weight_kg?.toString() ?? "") ||
+    gender !== (user?.gender ?? "") ||
+    stepsTarget !== ((user?.daily_steps_target ?? 10000).toString()) ||
     targetCalories !== (user?.target_calories?.toString() ?? "") ||
     targetProtein !== (user?.target_protein_g?.toString() ?? "") ||
     targetCarbs !== (user?.target_carbs_g?.toString() ?? "") ||
@@ -206,6 +210,8 @@ export default function ProfilePage() {
         age: age ? parseInt(age) : undefined,
         height_cm: heightCm ? parseFloat(heightCm) : undefined,
         weight_kg: weightKg ? parseFloat(weightKg) : undefined,
+        gender: (gender || undefined) as any,
+        daily_steps_target: stepsTarget ? parseInt(stepsTarget) : undefined,
         target_calories: targetCalories ? parseFloat(targetCalories) : undefined,
         target_protein_g: targetProtein ? parseFloat(targetProtein) : undefined,
         target_carbs_g: targetCarbs ? parseFloat(targetCarbs) : undefined,
@@ -360,6 +366,45 @@ export default function ProfilePage() {
           </div>
         </motion.div>
 
+        {/* ── Gender + Steps Target ───────────────────────────────────────── */}
+        <motion.div variants={fadeUp}>
+          <SectionHeader icon={Zap} title="Activity Settings" />
+          <div className="card-surface p-4 space-y-4">
+            {/* Gender */}
+            <div>
+              <p className="text-xs text-text-muted font-medium mb-2">
+                GENDER <span className="text-text-muted/60">(for accurate BMR)</span>
+              </p>
+              <div className="grid grid-cols-3 gap-2">
+                {(["male", "female", "other"] as const).map((g) => (
+                  <button
+                    key={g}
+                    onClick={() => setGender(gender === g ? "" : g)}
+                    className={cn(
+                      "py-2.5 rounded-xl border text-sm font-medium transition-all capitalize",
+                      gender === g
+                        ? "bg-blue-500/15 border-blue-500/40 text-blue-400"
+                        : "bg-surface-elevated border-border text-text-muted hover:border-blue-500/20"
+                    )}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {/* Steps target */}
+            <NumberField
+              label="Daily Steps Target"
+              value={stepsTarget}
+              onChange={setStepsTarget}
+              min={1000}
+              max={100000}
+              unit="steps"
+              placeholder="10000"
+            />
+          </div>
+        </motion.div>
+
         {/* ── Fitness Goal ────────────────────────────────────────────────── */}
         <motion.div variants={fadeUp}>
           <SectionHeader icon={Target} title="Fitness Goal" />
@@ -367,7 +412,7 @@ export default function ProfilePage() {
             {GOAL_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => setGoal(opt.value)}
+                onClick={() => setGoal(opt.value as any)}
                 className={cn(
                   "flex flex-col items-start gap-1 p-3 rounded-2xl border transition-all text-left",
                   goal === opt.value
@@ -402,7 +447,7 @@ export default function ProfilePage() {
             {ACTIVITY_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => setActivityLevel(opt.value)}
+                onClick={() => setActivityLevel(opt.value as any)}
                 className={cn(
                   "w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all",
                   activityLevel === opt.value

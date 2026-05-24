@@ -8,6 +8,8 @@ class User {
   final int? age;
   final double? heightCm;
   final double? weightKg;
+  final String? gender;            // 'male' | 'female' | 'other'
+  final int? dailyStepsTarget;     // default 10000
   final ActivityLevel activityLevel;
   final Goal goal;
   final int? targetCalories;
@@ -25,6 +27,8 @@ class User {
     this.age,
     this.heightCm,
     this.weightKg,
+    this.gender,
+    this.dailyStepsTarget,
     required this.activityLevel,
     required this.goal,
     this.targetCalories,
@@ -43,6 +47,8 @@ class User {
         age: json['age'] as int?,
         heightCm: (json['height_cm'] as num?)?.toDouble(),
         weightKg: (json['weight_kg'] as num?)?.toDouble(),
+        gender: json['gender'] as String?,
+        dailyStepsTarget: json['daily_steps_target'] as int?,
         activityLevel: ActivityLevel.fromString(json['activity_level'] as String? ?? 'moderate'),
         goal: Goal.fromString(json['goal'] as String? ?? 'maintain'),
         targetCalories: json['target_calories'] as int?,
@@ -61,6 +67,8 @@ class User {
         if (age != null) 'age': age,
         if (heightCm != null) 'height_cm': heightCm,
         if (weightKg != null) 'weight_kg': weightKg,
+        if (gender != null) 'gender': gender,
+        if (dailyStepsTarget != null) 'daily_steps_target': dailyStepsTarget,
         'activity_level': activityLevel.value,
         'goal': goal.value,
         if (targetCalories != null) 'target_calories': targetCalories,
@@ -76,6 +84,8 @@ class User {
     int? age,
     double? heightCm,
     double? weightKg,
+    String? gender,
+    int? dailyStepsTarget,
     ActivityLevel? activityLevel,
     Goal? goal,
     int? targetCalories,
@@ -91,6 +101,8 @@ class User {
         age: age ?? this.age,
         heightCm: heightCm ?? this.heightCm,
         weightKg: weightKg ?? this.weightKg,
+        gender: gender ?? this.gender,
+        dailyStepsTarget: dailyStepsTarget ?? this.dailyStepsTarget,
         activityLevel: activityLevel ?? this.activityLevel,
         goal: goal ?? this.goal,
         targetCalories: targetCalories ?? this.targetCalories,

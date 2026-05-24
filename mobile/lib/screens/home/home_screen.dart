@@ -6,7 +6,9 @@ import 'package:intl/intl.dart';
 
 import '../../core/api/analytics_api.dart';
 import '../../core/models/analytics.dart';
+import '../../core/models/step_log.dart';
 import '../../core/theme/app_theme.dart';
+import '../../providers/activity_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/food_provider.dart';
 import '../../providers/workout_provider.dart';
@@ -19,7 +21,24 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(authProvider).user;
     final foodAsync = ref.watch(todayFoodProvider);
+    final stepHistoryAsync = ref.watch(stepHistoryProvider);
     final today = DateFormat('EEEE, MMM d').format(DateTime.now());
+
+    // Compute today's burned calories from steps + BMR
+    final weightKg = user?.weightKg ?? 70.0;
+    final heightCm = user?.heightCm ?? 170.0;
+    final age = user?.age ?? 25;
+    final gender = user?.gender ?? 'other';
+    final bmr = calculateBmr(weightKg: weightKg, heightCm: heightCm, age: age, gender: gender);
+    final todayLog = stepHistoryAsync.value?.firstWhere(
+      (l) {
+        final now = DateTime.now();
+        return l.date.year == now.year && l.date.month == now.month && l.date.day == now.day;
+      },
+      orElse: () => StepLog(id: '', date: DateTime.now(), steps: 0),
+    );
+    final stepCal = todayLog != null ? stepsToCalories(steps: todayLog.steps, weightKg: weightKg, heightCm: heightCm) : 0.0;
+    final totalBurned = bmr + stepCal;
 
     return Scaffold(
       body: RefreshIndicator(
@@ -71,6 +90,7 @@ class HomeScreen extends ConsumerWidget {
                     data: (summary) => _CalorieCard(
                       summary: summary,
                       targetCalories: user?.targetCalories?.toDouble() ?? 2000,
+                      totalBurned: totalBurned,
                     ),
                   ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1, end: 0),
                   const SizedBox(height: 16),
@@ -169,13 +189,20 @@ class HomeScreen extends ConsumerWidget {
 // ── Sub-widgets ───────────────────────────────────────────────────────────────
 
 class _CalorieCard extends StatelessWidget {
-  const _CalorieCard({required this.summary, required this.targetCalories});
+  const _CalorieCard({
+    required this.summary,
+    required this.targetCalories,
+    required this.totalBurned,
+  });
   final dynamic summary;
   final double targetCalories;
+  final double totalBurned;
 
   @override
   Widget build(BuildContext context) {
-    final consumed = summary.totalCalories;
+    final consumed = summary.totalCalories as double;
+    // Net = consumed - burned (positive = surplus, negative = deficit)
+    final net = consumed - totalBurned;
     final progress = (consumed / targetCalories).clamp(0.0, 1.0);
     final remaining = (targetCalories - consumed).clamp(0.0, double.infinity);
 
@@ -186,35 +213,77 @@ class _CalorieCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
+      child: Column(
         children: [
-          ProgressRing(
-            progress: progress,
-            size: 100,
-            strokeWidth: 8,
-            color: AppColors.emerald,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  consumed.toInt().toString(),
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              ProgressRing(
+                progress: progress,
+                size: 100,
+                strokeWidth: 8,
+                color: AppColors.emerald,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      consumed.toInt().toString(),
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    ),
+                    const Text('kcal', style: TextStyle(fontSize: 10, color: AppColors.textMuted)),
+                  ],
                 ),
-                const Text('kcal', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
-              ],
-            ),
+              ),
+              const SizedBox(width: 20),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _CalorieStat('Goal', '${targetCalories.toInt()} kcal'),
+                    const SizedBox(height: 6),
+                    _CalorieStat('Consumed', '${consumed.toInt()} kcal'),
+                    const SizedBox(height: 6),
+                    _CalorieStat('Remaining', '${remaining.toInt()} kcal',
+                        color: remaining < 200 ? AppColors.amber : AppColors.emerald),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 20),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          // Burned row
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceElevated,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _CalorieStat('Goal', '${targetCalories.toInt()} kcal'),
-                const SizedBox(height: 8),
-                _CalorieStat('Consumed', '${consumed.toInt()} kcal'),
-                const SizedBox(height: 8),
-                _CalorieStat('Remaining', '${remaining.toInt()} kcal',
-                    color: remaining < 200 ? AppColors.amber : AppColors.emerald),
+                Row(
+                  children: [
+                    const Icon(Icons.local_fire_department_rounded,
+                        color: AppColors.amber, size: 14),
+                    const SizedBox(width: 6),
+                    Text('Burned ${totalBurned.toInt()} kcal',
+                        style: const TextStyle(
+                            color: AppColors.textSecondary, fontSize: 12)),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text(
+                      net >= 0
+                          ? '+${net.toInt()} surplus'
+                          : '${net.toInt().abs()} deficit',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: net >= 0 ? AppColors.amber : AppColors.emerald,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -222,6 +291,7 @@ class _CalorieCard extends StatelessWidget {
       ),
     );
   }
+
 }
 
 class _CalorieStat extends StatelessWidget {

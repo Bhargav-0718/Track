@@ -4,10 +4,10 @@ import 'package:go_router/go_router.dart';
 
 import 'core/theme/app_theme.dart';
 import 'providers/auth_provider.dart';
+import 'screens/activity/activity_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/home/home_screen.dart';
-import 'screens/insights/insights_screen.dart';
 import 'screens/log/log_screen.dart';
 import 'screens/profile/profile_screen.dart';
 import 'screens/progress/progress_screen.dart';
@@ -69,8 +69,8 @@ final _routerProvider = Provider<GoRouter>((ref) {
         routes: [
           GoRoute(path: '/home', builder: (_, __) => const HomeScreen()),
           GoRoute(path: '/log', builder: (_, __) => const LogScreen()),
+          GoRoute(path: '/activity', builder: (_, __) => const ActivityScreen()),
           GoRoute(path: '/progress', builder: (_, __) => const ProgressScreen()),
-          GoRoute(path: '/insights', builder: (_, __) => const InsightsScreen()),
           GoRoute(path: '/profile', builder: (_, __) => const ProfileScreen()),
         ],
       ),

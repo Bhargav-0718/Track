@@ -2,14 +2,14 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Home, Plus, TrendingUp, Sparkles, User } from "lucide-react";
+import { Home, Plus, Footprints, TrendingUp, User } from "lucide-react";
 import { cn } from "@/lib/utils/format";
 
 const NAV_ITEMS = [
   { href: "/home", icon: Home, label: "Home" },
   { href: "/log", icon: Plus, label: "Log" },
+  { href: "/activity", icon: Footprints, label: "Activity" },
   { href: "/progress", icon: TrendingUp, label: "Progress" },
-  { href: "/insights", icon: Sparkles, label: "Insights" },
   { href: "/profile", icon: User, label: "Profile" },
 ] as const;
 

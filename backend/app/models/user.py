@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, Float, Index, Integer, String
+from sqlalchemy import Boolean, Float, Index, Integer, String  # noqa: F401
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from app.models.food_log import FoodLog
     from app.models.food_memory import FoodMemory
     from app.models.progress_checkpoint import ProgressCheckpoint
+    from app.models.step_log import StepLog
     from app.models.user_preference import UserPreference
     from app.models.workout_log import WorkoutLog
 
@@ -56,6 +57,10 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     target_carbs_g: Mapped[float | None] = mapped_column(Float, nullable=True)
     target_fat_g: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # ── Activity ──────────────────────────────────────────────────────────────
+    gender: Mapped[str | None] = mapped_column(String(10), nullable=True)  # 'male' | 'female' | 'other'
+    daily_steps_target: Mapped[int | None] = mapped_column(Integer, nullable=True, default=10000)
+
     # ── Status ────────────────────────────────────────────────────────────────
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -86,6 +91,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     daily_reports: Mapped[list[DailyReport]] = relationship(
         "DailyReport", back_populates="user", lazy="noload",
         cascade="all, delete-orphan"
+    )
+    step_logs: Mapped[list[StepLog]] = relationship(
+        "StepLog", back_populates="user", lazy="noload", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
