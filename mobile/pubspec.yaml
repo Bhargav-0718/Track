@@ -1,0 +1,59 @@
+name: track
+description: Track — Adaptive Fitness Memory
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.3.5
+
+  # Navigation
+  go_router: ^14.6.2
+
+  # HTTP client
+  dio: ^5.7.0
+
+  # Secure storage (for JWT token)
+  flutter_secure_storage: ^9.2.2
+
+  # Charts
+  fl_chart: ^0.69.0
+
+  # Image picker + camera
+  image_picker: ^1.1.2
+
+  # Cached network images
+  cached_network_image: ^3.4.1
+
+  # Health Connect (Android)
+  health: ^12.2.0
+
+  # Date formatting
+  intl: ^0.19.0
+
+  # Animations
+  flutter_animate: ^4.5.0
+
+  # Shimmer loading
+  shimmer: ^3.0.0
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.4.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/

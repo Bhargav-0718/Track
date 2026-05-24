@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[project]
+name = "track-backend"
+version = "0.1.0"
+description = "Track — Adaptive AI Fitness Memory System Backend"
+requires-python = ">=3.11"
+dependencies = [
+    # --- Web Framework ---
+    "fastapi[all]>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+
+    # --- Database ---
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30.0",
+    "alembic>=1.14.0",
+    "pgvector>=0.3.6",
+
+    # --- Validation ---
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "email-validator>=2.2.0",
+
+    # --- Auth ---
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+
+    # --- AI ---
+    "openai>=1.57.0",
+    "tiktoken>=0.8.0",           # Token counting for prompt management
+
+    # --- HTTP Client ---
+    "httpx>=0.28.0",             # Async HTTP for nutrition API calls
+
+    # --- Logging ---
+    "structlog>=24.4.0",
+
+    # --- Image Processing (Phase 3) ---
+    "Pillow>=11.0.0",            # Image resize + JPEG compression for progress photos
+    "aiofiles>=24.1.0",          # Async file I/O for local storage backend
+
+    # --- Utilities ---
+    "python-multipart>=0.0.18",  # File uploads (multipart/form-data)
+    "python-dateutil>=2.9.0",
+    "pytz>=2024.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",             # For TestClient
+    "factory-boy>=3.3.0",        # Test fixtures
+    "faker>=33.0.0",
+    "ruff>=0.8.0",               # Linting + formatting
+    "mypy>=1.13.0",
+    "pre-commit>=4.0.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+env = [
+    "ENVIRONMENT=testing",
+    "DATABASE_URL=postgresql+asyncpg://track_user:track_password@localhost:5432/track_test_db",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*", "migrations/*"]
