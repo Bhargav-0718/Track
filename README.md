@@ -286,6 +286,51 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 
 ---
 
+## Deployment
+
+### Frontend → Vercel
+
+1. Go to [vercel.com](https://vercel.com) → **Add New Project** → import this repo
+2. Vercel will auto-detect the `vercel.json` at the root and set `frontend/` as the root directory
+3. Add one **Environment Variable** in Project Settings:
+
+   | Variable | Value |
+   |---|---|
+   | `NEXT_PUBLIC_API_URL` | `https://your-backend.up.railway.app` |
+
+4. Hit **Deploy** — that's it.
+
+> The app calls the backend directly from the browser using `NEXT_PUBLIC_API_URL`, so no server-side proxy is needed.
+
+---
+
+### Backend → Railway
+
+1. Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
+2. Select this repo, set **Root Directory** to `backend/`
+3. Railway detects `backend/railway.json` and builds from `Dockerfile`
+4. Add a **PostgreSQL** plugin — Railway auto-sets `DATABASE_URL` (the asyncpg driver conversion is handled automatically)
+5. Set these **Environment Variables** in Railway:
+
+   | Variable | Value |
+   |---|---|
+   | `SECRET_KEY` | A random 32+ character string |
+   | `OPENAI_API_KEY` | Your OpenAI API key |
+   | `ENVIRONMENT` | `production` |
+   | `CORS_ORIGINS` | `["https://your-app.vercel.app"]` |
+   | `LOG_LEVEL` | `INFO` |
+
+6. On first deploy the `CMD` automatically runs `alembic upgrade head` before starting the server
+7. After the first deploy, seed the nutrition dataset:
+   ```bash
+   # In the Railway service shell
+   python scripts/import_nutrition_data.py
+   ```
+
+> **Database URL**: Railway provides `DATABASE_URL` as `postgresql://...` — the backend config automatically converts it to `postgresql+asyncpg://...`.
+
+---
+
 ## Running Tests
 
 ```bash
