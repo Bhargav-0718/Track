@@ -1,7 +1,7 @@
 import { api } from "./client";
 import type { AuthTokens, User } from "../types";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 export const authApi = {
   register: (data: {

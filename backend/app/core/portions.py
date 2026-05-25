@@ -45,21 +45,29 @@ KATORI_SIZES: dict[str, float] = {
 # Validated against INDB recipe weights (grams per standard piece)
 
 PIECE_WEIGHTS: dict[str, float] = {
-    # Breads
-    "roti":       35.0,
-    "chapati":    35.0,
-    "chapathi":   35.0,
-    "chappati":   35.0,
-    "paratha":    75.0,
-    "parantha":   75.0,
-    "naan":      100.0,
-    "puri":       28.0,
-    "poori":      28.0,
-    "bhatura":    90.0,
-    "thepla":     40.0,
-    "litti":      60.0,
-    "kulcha":     80.0,
-    "rumali":     50.0,
+    # Breads (homemade Indian standard — verified against ICMR-NIN household measures)
+    "roti":           30.0,   # 1 thin homemade roti ≈ 25-30g
+    "chapati":        30.0,
+    "chapathi":       30.0,
+    "chappati":       30.0,
+    "fulka":          25.0,   # thinner than roti
+    "phulka":         25.0,
+    "paratha":        75.0,
+    "parantha":       75.0,
+    "naan":          100.0,
+    "puri":           25.0,
+    "poori":          25.0,
+    "bhatura":        90.0,
+    "thepla":         35.0,
+    "litti":          60.0,
+    "kulcha":         80.0,
+    "rumali":         50.0,
+    # Bhakri family — thick, denser than roti
+    "bhakri":         55.0,   # 1 medium bhakri ≈ 50-60g
+    "jowar bhakri":   55.0,
+    "bajra bhakri":   55.0,
+    "nachni bhakri":  55.0,
+    "makki roti":     45.0,
 
     # South Indian
     "idli":       45.0,
@@ -154,11 +162,12 @@ Katori/Bowl sizes (grams):
 - 1 vati (Gujarati small bowl) = 100g
 - 1 full bowl = 250g
 
-Common Indian bread/item piece weights:
-- 1 roti/chapati = 35g
+Common Indian bread/item piece weights (homemade standard):
+- 1 roti/chapati/fulka = 30g   ← thin homemade roti, NOT restaurant size
+- 1 bhakri (jowar/bajra/nachni) = 55g  ← thick flatbread, heavier than roti
 - 1 paratha = 75g
 - 1 naan = 100g
-- 1 puri/poori = 28g
+- 1 puri/poori = 25g
 - 1 bhatura = 90g
 - 1 idli = 45g
 - 1 dosa = 100g

@@ -205,6 +205,39 @@ export interface PhysiqueObservation {
   direction: "positive" | "neutral" | "insufficient_data";
 }
 
+// ── AI Coach ──────────────────────────────────────────────────────────────────
+
+export type CoachMessageRole = "user" | "assistant";
+
+export interface CoachMessage {
+  role: CoachMessageRole;
+  content: string;
+  created_at: string;
+}
+
+export interface CoachSession {
+  messages: CoachMessage[];
+}
+
+// SSE events streamed from POST /coach/chat
+export type CoachSSEEvent =
+  | { type: "text_delta";     content: string }
+  | { type: "food_logged";    food_name: string; calories: number; meal_type: string }
+  | { type: "workout_logged"; workout_type: string; duration_minutes: number; calories_burned: number }
+  | { type: "steps_logged";   steps: number }
+  | { type: "error";          message: string }
+  | { type: "done" };
+
+// A message as rendered in the chat UI (extends CoachMessage with local state)
+export interface ChatBubble {
+  id: string;           // client-generated uuid for React key
+  role: CoachMessageRole;
+  content: string;
+  streaming?: boolean;  // true while the assistant is still typing
+  timestamp: Date;
+  actionEvents?: CoachSSEEvent[];   // food_logged / workout_logged / steps_logged attached to this message
+}
+
 export interface CompareResponse {
   before_checkpoint_id: string;
   after_checkpoint_id: string;

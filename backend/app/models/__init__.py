@@ -4,6 +4,7 @@ Beanie document model imports.
 Import all documents here so they can be referenced in one place.
 """
 from app.models.behavior_event import BehaviorEvent
+from app.models.coach_session import CoachSession
 from app.models.correction_event import CorrectionEvent
 from app.models.daily_report import DailyReport
 from app.models.daily_summary import DailySummary
@@ -31,4 +32,5 @@ __all__ = [
     "StepLog",
     "DailyReport",
     "BehaviorEvent",
+    "CoachSession",
 ]

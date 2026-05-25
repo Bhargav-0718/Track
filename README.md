@@ -19,7 +19,7 @@ Next time → pulls from memory, skips the AI call entirely
 
 ```
 Track/
-├── backend/      FastAPI · PostgreSQL + pgvector · OpenAI GPT-4o
+├── backend/      FastAPI · MongoDB Atlas · Beanie ODM · OpenAI GPT-4o
 ├── frontend/     Next.js 14 · TypeScript · Tailwind CSS
 └── mobile/       Flutter · Riverpod · Android Health Connect
 ```
@@ -32,21 +32,21 @@ All three share the same REST API at `/api/v1/`.
 
 ### Food Logging
 - **Natural language input** — describe a meal in any format, AI parses and estimates nutrition
-- **Three-tier estimation pipeline**: memory lookup → nutrition DB (Indian Food dataset) → GPT-4o fallback
+- **Three-tier estimation pipeline**: memory lookup → nutrition DB (1,014-entry Indian food dataset) → GPT-4o fallback
 - **Confidence scoring** — every log is tagged `confirmed`, `estimated`, or `uncertain` with a numeric score
-- **Adaptive memory** — uses `pgvector` embeddings so your personal foods are retrieved semantically
+- **Adaptive memory** — OpenAI embeddings + cosine similarity retrieves your personal foods semantically
 - **Meal types** — breakfast, lunch, dinner, snack, pre/post-workout
 
 ### Workout Tracking
 - Log workouts with title, type, duration, and per-exercise sets/reps
 - **MET-based calorie estimation** — auto-calculated from workout type, intensity, and your body weight if no manual entry
 - Exercise autocomplete from your history
-- **Android Health Connect sync** — steps, active minutes, and activity calories pulled automatically
+- **Daily step tracking** — log daily steps, view 7-day history and BMR-adjusted burn
 
 ### Progress & Insights
 - **Progress checkpoints** — log weight, body fat %, notes, and photos
 - **AI physique comparison** — GPT-4o Vision compares before/after photos with structured observations
-- **Daily AI reports** — behavioral insights, motivational messages, calorie/macro summary
+- **Daily AI reports** — behavioural insights, motivational messages, calorie/macro summary
 - **Streak tracking** — consecutive days logged, longest streak
 - **Consistency scoring** — 7-day and 30-day breakdowns across logging, calories, protein, and workouts
 
@@ -59,12 +59,13 @@ All three share the same REST API at `/api/v1/`.
 |---|---|
 | Framework | FastAPI 0.115 + Uvicorn |
 | Language | Python 3.11+ |
-| ORM | SQLAlchemy 2.0 (async) + asyncpg |
-| Database | PostgreSQL 16 + pgvector extension |
-| Migrations | Alembic |
+| ODM | Beanie 2.0 (async, Pydantic v2) |
+| Driver | Motor 3.7 (async MongoDB) |
+| Database | MongoDB Atlas (cloud-hosted) |
 | AI | OpenAI GPT-4o (chat + vision), `text-embedding-3-small` |
+| Vector search | Python cosine similarity over per-user food memories |
 | Auth | JWT (python-jose) + bcrypt (passlib) |
-| Validation | Pydantic v2 |
+| Validation | Pydantic v2 + pydantic-settings |
 | Logging | structlog |
 | Image handling | Pillow + aiofiles |
 
@@ -80,7 +81,7 @@ All three share the same REST API at `/api/v1/`.
 | State | Zustand |
 | Charts | Recharts |
 
-### Mobile (Android / iOS)
+### Mobile (Android)
 | Layer | Technology |
 |---|---|
 | Framework | Flutter 3.4+ |
@@ -98,11 +99,13 @@ All three share the same REST API at `/api/v1/`.
 
 ### Prerequisites
 
-- **Docker** (for PostgreSQL + pgvector)
 - **Python 3.11+**
 - **Node.js 18+**
 - **Flutter SDK 3.4+** (for mobile)
+- A **MongoDB Atlas** account (free tier works — [cloud.mongodb.com](https://cloud.mongodb.com))
 - An **OpenAI API key** (GPT-4o access)
+
+> No Docker required for the database — MongoDB runs on Atlas (cloud).
 
 ---
 
@@ -113,10 +116,7 @@ cd backend
 
 # Copy and fill environment variables
 cp .env.example .env
-# Edit .env — at minimum set OPENAI_API_KEY and SECRET_KEY
-
-# Start PostgreSQL + pgvector via Docker
-docker compose up db -d
+# Edit .env — set MONGODB_URL, OPENAI_API_KEY, and SECRET_KEY (see table below)
 
 # Create a virtual environment and install dependencies
 python -m venv .venv
@@ -125,27 +125,24 @@ python -m venv .venv
 
 pip install -e ".[dev]"
 
-# Run database migrations
-alembic upgrade head
-
-# (Optional) Import Indian food nutrition dataset
+# (Optional) Import Indian food nutrition dataset — 1,014 dishes
 python scripts/import_nutrition_data.py
 
 # Start the API server
 uvicorn app.main:app --reload --port 8000
 ```
 
-API is now running at **http://localhost:8000**
+API is now running at **http://localhost:8000**  
 Interactive docs at **http://localhost:8000/docs**
 
-#### Run with Docker Compose (full stack)
+> MongoDB collections are created automatically by Beanie on first startup — no migration step needed.
+
+#### Run with Docker Compose
 
 ```bash
 cd backend
 docker compose up --build
 ```
-
-This starts both PostgreSQL and the API server together.
 
 ---
 
@@ -199,17 +196,17 @@ The app expects the backend at the IP configured in `mobile/lib/core/api/client.
 ```
 backend/
 ├── app/
-│   ├── api/v1/          # Route handlers (food_logs, workout_logs, users, analytics…)
-│   ├── models/          # SQLAlchemy ORM models
-│   ├── schemas/         # Pydantic request/response models
-│   ├── repositories/    # DB query layer
+│   ├── api/v1/          # Route handlers (food_logs, workout_logs, users, analytics, activity…)
+│   ├── models/          # Beanie Document models (MongoDB collections)
+│   ├── schemas/         # Pydantic request/response schemas
+│   ├── repositories/    # DB query layer (Beanie find/insert/update)
 │   ├── services/        # Business logic
-│   │   └── ai/          # OpenAI client, LLM, embedding, vision, report services
-│   └── core/            # Auth, exceptions, logging, portions
-├── migrations/          # Alembic migration versions
-├── data/                # Indian food nutrition CSVs
-├── scripts/             # Setup and import scripts
-└── tests/               # Pytest test suite
+│   │   ├── ai/          # OpenAI client, LLM, embedding, vision, report services
+│   │   └── storage/     # Local file storage for progress photos
+│   └── core/            # Auth, exceptions, logging, portion helpers
+├── data/                # Indian food nutrition CSV (INDB dataset)
+├── scripts/             # Import scripts (import_nutrition_data.py)
+└── tests/               # Pytest test suite (pytest-asyncio, session-scoped event loop)
 
 frontend/
 ├── app/
@@ -254,15 +251,16 @@ Base URL: `http://localhost:8000/api/v1`
 | `DELETE` | `/food-logs/{id}` | Delete a food log |
 | `POST` | `/workout-logs/` | Log a workout |
 | `GET` | `/workout-logs/` | List workouts (paginated, filterable) |
-| `DELETE` | `/workout-logs/{id}` | Delete a workout |
-| `GET` | `/dashboard` | Full daily dashboard (food + workouts + progress) |
-| `POST` | `/health-connect/sync` | Sync Android Health Connect data |
+| `GET` | `/dashboard` | Full daily dashboard (food + workouts + step data) |
+| `GET` | `/health-connect/sync` | Sync Android Health Connect data |
+| `POST` | `/activity/steps` | Log daily step count |
+| `GET` | `/activity/steps` | Step history (default 7 days, up to 90) |
 | `GET` | `/analytics/streak` | Current and longest streak |
 | `GET` | `/analytics/consistency` | 7d / 30d consistency scores |
 | `GET` | `/analytics/trends` | Calorie and workout trend data |
 | `POST` | `/checkpoints/` | Create progress checkpoint |
 | `POST` | `/checkpoints/{id}/photos` | Upload progress photo |
-| `POST` | `/checkpoints/compare` | AI physique comparison |
+| `POST` | `/checkpoints/compare` | AI physique comparison (GPT-4o Vision) |
 | `POST` | `/reports/generate` | Generate daily AI report |
 
 Full interactive docs: **http://localhost:8000/docs**
@@ -276,13 +274,16 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 | Variable | Description |
 |---|---|
 | `SECRET_KEY` | JWT signing secret — use a random 32+ char string in production |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `OPENAI_API_KEY` | Your OpenAI API key (GPT-4o required) |
-| `OPENAI_CHAT_MODEL` | Default: `gpt-4o` |
+| `MONGODB_URL` | Atlas connection string: `mongodb+srv://<user>:<pass>@<cluster>.mongodb.net/` |
+| `MONGODB_DB_NAME` | Database name (default: `track_db`) |
+| `OPENAI_API_KEY` | Your OpenAI API key (GPT-4o access required) |
+| `OPENAI_CHAT_MODEL` | Default: `gpt-4o-mini` |
 | `OPENAI_EMBEDDING_MODEL` | Default: `text-embedding-3-small` |
 | `CORS_ORIGINS` | Allowed frontend origins, e.g. `["http://localhost:3000"]` |
-| `STORAGE_BACKEND` | `local` (default) — photos stored on disk |
+| `STORAGE_BACKEND` | `local` (default) — progress photos stored on disk |
 | `ENVIRONMENT` | `development` \| `staging` \| `production` |
+
+> **Never commit `.env`** — it's in `.gitignore`. Set `MONGODB_URL` only in your local `.env` and in your hosting provider's environment variable settings.
 
 ---
 
@@ -291,16 +292,14 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 ### Frontend → Vercel
 
 1. Go to [vercel.com](https://vercel.com) → **Add New Project** → import this repo
-2. Vercel will auto-detect the `vercel.json` at the root and set `frontend/` as the root directory
+2. Vercel auto-detects `vercel.json` at the root
 3. Add one **Environment Variable** in Project Settings:
 
    | Variable | Value |
    |---|---|
    | `NEXT_PUBLIC_API_URL` | `https://your-backend.up.railway.app` |
 
-4. Hit **Deploy** — that's it.
-
-> The app calls the backend directly from the browser using `NEXT_PUBLIC_API_URL`, so no server-side proxy is needed.
+4. Hit **Deploy**.
 
 ---
 
@@ -309,25 +308,23 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 1. Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
 2. Select this repo, set **Root Directory** to `backend/`
 3. Railway detects `backend/railway.json` and builds from `Dockerfile`
-4. Add a **PostgreSQL** plugin — Railway auto-sets `DATABASE_URL` (the asyncpg driver conversion is handled automatically)
-5. Set these **Environment Variables** in Railway:
+4. Set these **Environment Variables** in Railway:
 
    | Variable | Value |
    |---|---|
    | `SECRET_KEY` | A random 32+ character string |
+   | `MONGODB_URL` | Your Atlas connection string |
    | `OPENAI_API_KEY` | Your OpenAI API key |
    | `ENVIRONMENT` | `production` |
    | `CORS_ORIGINS` | `["https://your-app.vercel.app"]` |
    | `LOG_LEVEL` | `INFO` |
 
-6. On first deploy the `CMD` automatically runs `alembic upgrade head` before starting the server
-7. After the first deploy, seed the nutrition dataset:
+5. After first deploy, seed the nutrition dataset via the Railway shell:
    ```bash
-   # In the Railway service shell
    python scripts/import_nutrition_data.py
    ```
 
-> **Database URL**: Railway provides `DATABASE_URL` as `postgresql://...` — the backend config automatically converts it to `postgresql+asyncpg://...`.
+> No database plugin needed — the backend connects directly to MongoDB Atlas via `MONGODB_URL`.
 
 ---
 
@@ -336,12 +333,15 @@ Copy `backend/.env.example` to `backend/.env` and configure:
 ```bash
 cd backend
 
-# Make sure the test DB is running
-docker compose up db -d
+# Ensure .env has a valid MONGODB_URL
+# Tests run against a separate `track_test_db` database — dropped after the session
 
 pytest
 pytest --cov=app       # with coverage report
+pytest -v              # verbose per-test output
 ```
+
+The test suite uses a session-scoped event loop (Motor requirement) and drops the test database on teardown — production data is never touched.
 
 ---
 

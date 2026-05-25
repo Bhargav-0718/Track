@@ -9,7 +9,7 @@ const _destinations = [
   _Destination('/home', 'Home', Icons.home_rounded, Icons.home_outlined),
   _Destination('/log', 'Log', Icons.add_circle_rounded, Icons.add_circle_outline_rounded),
   _Destination('/activity', 'Activity', Icons.directions_walk_rounded, Icons.directions_walk_outlined),
-  _Destination('/progress', 'Progress', Icons.photo_library_rounded, Icons.photo_library_outlined),
+  _Destination('/insights', 'Insights', Icons.insights_rounded, Icons.insights_outlined),
   _Destination('/profile', 'Profile', Icons.person_rounded, Icons.person_outlined),
 ];
 

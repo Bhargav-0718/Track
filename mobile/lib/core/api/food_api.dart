@@ -12,20 +12,23 @@ class FoodApi {
   }
 
   static Future<DailyFoodSummary> getByDate(String date) async {
+    // Backend uses a query param: GET /food-logs/daily?date=YYYY-MM-DD
     final response = await dio.get<Map<String, dynamic>>(
-      '/api/v1/food-logs/daily/$date',
+      '/api/v1/food-logs/daily',
+      queryParameters: {'date': date},
     );
     return DailyFoodSummary.fromJson(response.data!);
   }
 
-  /// AI-powered food estimation from text
+  /// AI-powered food estimation from text.
+  /// Backend uses the single POST /food-logs/ endpoint with raw_input field.
   static Future<FoodLog> estimateAndLog({
     required String rawInput,
     required MealType mealType,
     String? loggedAt,
   }) async {
     final response = await dio.post<Map<String, dynamic>>(
-      '/api/v1/food-logs/estimate',
+      '/api/v1/food-logs/',
       data: {
         'raw_input': rawInput,
         'meal_type': mealType.value,
@@ -48,7 +51,7 @@ class FoodApi {
     String? loggedAt,
   }) async {
     final response = await dio.post<Map<String, dynamic>>(
-      '/api/v1/food-logs',
+      '/api/v1/food-logs/',
       data: {
         'food_name': foodName,
         'calories': calories,
@@ -65,7 +68,7 @@ class FoodApi {
   }
 
   static Future<void> deleteLog(String id) async {
-    await dio.delete('/api/v1/food-logs/$id');
+    await dio.delete('/api/v1/food-logs/$id/');
   }
 
   static Future<FoodLog> correctLog(String id, Map<String, dynamic> data) async {
