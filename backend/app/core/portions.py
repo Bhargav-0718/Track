@@ -46,20 +46,26 @@ KATORI_SIZES: dict[str, float] = {
 
 PIECE_WEIGHTS: dict[str, float] = {
     # Breads
-    "roti":       35.0,
-    "chapati":    35.0,
-    "chapathi":   35.0,
-    "chappati":   35.0,
-    "paratha":    75.0,
-    "parantha":   75.0,
-    "naan":      100.0,
-    "puri":       28.0,
-    "poori":      28.0,
-    "bhatura":    90.0,
-    "thepla":     40.0,
-    "litti":      60.0,
-    "kulcha":     80.0,
-    "rumali":     50.0,
+    "roti":           35.0,
+    "chapati":        35.0,
+    "chapathi":       35.0,
+    "chappati":       35.0,
+    "paratha":        75.0,
+    "parantha":       75.0,
+    "naan":          100.0,
+    "puri":           28.0,
+    "poori":          28.0,
+    "bhatura":        90.0,
+    "thepla":         40.0,
+    "litti":          60.0,
+    "kulcha":         80.0,
+    "rumali":         50.0,
+    # Bhakri family (thick flatbreads — heavier than roti)
+    "bhakri":         70.0,   # 1 medium jowar/wheat bhakri
+    "jowar bhakri":   70.0,
+    "bajra bhakri":   70.0,
+    "nachni bhakri":  65.0,
+    "makki roti":     50.0,   # thinner than bhakri
 
     # South Indian
     "idli":       45.0,
@@ -156,6 +162,7 @@ Katori/Bowl sizes (grams):
 
 Common Indian bread/item piece weights:
 - 1 roti/chapati = 35g
+- 1 bhakri (jowar/bajra/nachni) = 70g  ← thicker and heavier than roti
 - 1 paratha = 75g
 - 1 naan = 100g
 - 1 puri/poori = 28g

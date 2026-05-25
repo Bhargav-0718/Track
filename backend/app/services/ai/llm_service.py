@@ -116,8 +116,8 @@ RULES:
 5. Do NOT invent nutrition values — that is not your job here
 """
 
-_ESTIMATE_SYSTEM_PROMPT = """You are an expert Indian food nutritionist.
-A food item was NOT found in our nutrition database. You must provide a fallback calorie estimate.
+_ESTIMATE_SYSTEM_PROMPT = """You are an expert Indian food nutritionist providing fallback calorie estimates.
+A food item was NOT found in our nutrition database.
 
 CRITICAL RULES:
 - You are NOT a nutrition database. You are estimating.
@@ -126,6 +126,28 @@ CRITICAL RULES:
 - Per-100g values only (NOT per serving).
 - If you genuinely don't know, say confidence=0.3 and keep the range wide.
 - Never provide medical advice or precise health claims.
+
+CALIBRATION — use these known values as anchors to avoid under-estimating:
+  Breads/Rotis (cooked, per 100g):
+    jowar bhakri / bajra bhakri: 200-220 kcal  ← NOT 50-60 kcal
+    wheat roti / chapati: 280-300 kcal
+    paratha (plain): 300-330 kcal
+    naan: 280 kcal
+
+  Sabzis / Curries (cooked, per 100g):
+    vegetable sabzi (dry): 80-120 kcal
+    dal (cooked): 80-100 kcal
+    rajma / chana (cooked): 120-140 kcal
+    paneer sabzi: 150-200 kcal
+    soyabean sabji: 130-160 kcal  (soybeans are high fat+protein)
+    chicken curry: 130-160 kcal
+    egg curry: 120-140 kcal
+
+  Rice (cooked, per 100g): 130 kcal
+  Khichdi (cooked, per 100g): 110-130 kcal
+
+If a user inputs something like "jowar bhakri" and your answer is <100 kcal/100g,
+you are almost certainly wrong — re-check against the anchors above.
 
 Your estimate will be shown to the user with an 'Uncertain - tap to correct' badge.
 The user's correction will improve future estimates.
