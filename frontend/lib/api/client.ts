@@ -2,7 +2,7 @@
 // All requests go through this client to ensure consistent auth headers,
 // error handling, and base URL management.
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 class ApiError extends Error {
   constructor(
