@@ -10,9 +10,9 @@ Lifecycle:
 6. API router mounted at /api/v1
 
 Startup/shutdown hooks handle:
-- Database connection verification
-- (Phase 2) OpenAI client warmup
-- (Phase 2) pgvector index verification
+- MongoDB init via Beanie (registers all document models)
+- Database connectivity check
+- Clean disconnect on shutdown
 """
 import time
 import uuid
@@ -28,7 +28,7 @@ from app.api.v1.router import api_router
 from app.config import settings
 from app.core.exceptions import TrackBaseException, get_http_status
 from app.core.logging import configure_logging, get_logger
-from app.database import check_database_connection
+from app.database import check_database_connection, close_db, init_db
 from app.schemas.common import ErrorResponse, HealthResponse
 
 # Configure logging before anything else
@@ -48,18 +48,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         version="0.1.0",
     )
 
-    db_ok = await check_database_connection()
-    if not db_ok:
-        logger.error("database_connection_failed_on_startup")
-        raise RuntimeError("Cannot connect to database at startup")
+    # Initialize MongoDB + Beanie (registers all Document models)
+    await init_db()
 
-    logger.info("database_connected")
+    logger.info("mongodb_connected", db=settings.mongodb_db_name)
     logger.info("track_api_ready", prefix=settings.api_v1_prefix)
 
     yield
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("track_api_shutting_down")
+    await close_db()
 
 
 # ── App Factory ────────────────────────────────────────────────────────────────
@@ -179,7 +178,7 @@ All endpoints are versioned under `/api/v1/`.
             ).model_dump(),
         )
 
-    # ── Static Files (Phase 3 — local photo serving) ───────────────────────────
+    # ── Static Files (local photo serving) ────────────────────────────────────
     # Serves uploaded progress photos at /uploads/{user_id}/{year}/{month}/{file}
     # In production, replace with a CDN or S3 presigned URLs.
     import os

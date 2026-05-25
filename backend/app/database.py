@@ -1,80 +1,86 @@
 """
-Async SQLAlchemy database engine and session management.
+MongoDB database connection and Beanie ODM initialization.
 
 Design decisions:
-- asyncpg driver for maximum PostgreSQL async performance
-- Connection pooling tuned for typical FastAPI workloads
-- Session-per-request pattern via FastAPI dependency injection
-- Explicit session lifecycle (no implicit commits)
+- Motor (async MongoDB driver) + Beanie (ODM on top of Motor)
+- Single global client — initialized at startup, closed at shutdown
+- Beanie handles document model registration
+- No per-request sessions — Beanie documents operate globally
 """
-from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING
 
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.config import settings
 
-# ── Engine ─────────────────────────────────────────────────────────────────────
+# ── Client Singleton ───────────────────────────────────────────────────────────
 
-engine: AsyncEngine = create_async_engine(
-    settings.database_url,
-    pool_size=settings.database_pool_size,
-    max_overflow=settings.database_max_overflow,
-    echo=settings.database_echo,
-    # Recycle connections every 30 min to avoid stale connections
-    pool_recycle=1800,
-    # Verify connection health before using from pool
-    pool_pre_ping=True,
-    # JSON serialization: use standard json for now
-    json_serializer=None,
-)
-
-# ── Session Factory ─────────────────────────────────────────────────────────────
-
-AsyncSessionLocal = async_sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False,  # Don't expire objects after commit (safer for async)
-    autocommit=False,
-    autoflush=False,
-)
+_client: AsyncIOMotorClient | None = None  # type: ignore[type-arg]
 
 
-# ── Dependency ──────────────────────────────────────────────────────────────────
-
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
+async def init_db() -> None:
     """
-    FastAPI dependency that provides a database session per request.
-
-    Usage:
-        @router.get("/items")
-        async def list_items(db: AsyncSession = Depends(get_db)):
-            ...
-
-    The session is automatically closed after the request completes.
-    Callers are responsible for commit/rollback within their scope.
+    Initialize the MongoDB connection and register all Beanie document models.
+    Called once at application startup.
     """
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
+    global _client
+
+    # Import all document models for Beanie registration
+    from app.models.behavior_event import BehaviorEvent
+    from app.models.correction_event import CorrectionEvent
+    from app.models.daily_report import DailyReport
+    from app.models.daily_summary import DailySummary
+    from app.models.food_log import FoodLog
+    from app.models.food_memory import FoodMemory
+    from app.models.nutrition_cache import NutritionCache
+    from app.models.progress_checkpoint import ProgressCheckpoint
+    from app.models.progress_photo import ProgressPhoto
+    from app.models.step_log import StepLog
+    from app.models.user import User
+    from app.models.user_preference import UserPreference
+    from app.models.workout_log import WorkoutLog
+    from beanie import init_beanie
+
+    _client = AsyncIOMotorClient(settings.mongodb_url)
+    database = _client[settings.mongodb_db_name]
+
+    await init_beanie(
+        database=database,
+        document_models=[
+            User,
+            UserPreference,
+            FoodLog,
+            WorkoutLog,
+            FoodMemory,
+            NutritionCache,
+            DailySummary,
+            CorrectionEvent,
+            ProgressCheckpoint,
+            ProgressPhoto,
+            StepLog,
+            DailyReport,
+            BehaviorEvent,
+        ],
+    )
 
 
-# ── Health Check ────────────────────────────────────────────────────────────────
+async def close_db() -> None:
+    """Close the MongoDB connection. Called at application shutdown."""
+    global _client
+    if _client is not None:
+        _client.close()
+        _client = None
+
 
 async def check_database_connection() -> bool:
     """Verify the database is reachable. Used in health check endpoint."""
     try:
-        async with AsyncSessionLocal() as session:
-            await session.execute(__import__("sqlalchemy").text("SELECT 1"))
+        probe_client = AsyncIOMotorClient(
+            settings.mongodb_url,
+            serverSelectionTimeoutMS=3000,
+        )
+        await probe_client.server_info()
+        probe_client.close()
         return True
     except Exception:
         return False

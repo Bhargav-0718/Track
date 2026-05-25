@@ -17,8 +17,6 @@ Image upload pipeline:
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.exceptions import ResourceNotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.repositories.checkpoint_repository import CheckpointRepository
@@ -43,9 +41,8 @@ logger = get_logger(__name__)
 
 
 class CheckpointService:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-        self.repo = CheckpointRepository(session)
+    def __init__(self) -> None:
+        self.repo = CheckpointRepository()
         self.storage = get_storage_backend()
 
     # ── Checkpoint CRUD ────────────────────────────────────────────────────────
@@ -63,7 +60,6 @@ class CheckpointService:
             notes=data.notes,
             tags=data.tags,
         )
-        await self.session.commit()
 
         logger.info(
             "checkpoint_created",
@@ -119,10 +115,12 @@ class CheckpointService:
         )
         summaries = []
         for cp in checkpoints:
+            # Fetch photos for each checkpoint summary
+            from app.repositories.checkpoint_repository import CheckpointRepository
+            photos = await self.repo.get_photos_for_checkpoint(cp.id)
             primary_url = None
-            if cp.photos:
-                primary = min(cp.photos, key=lambda p: p.display_order)
-                primary_url = await self.storage.get_url(primary.storage_key)
+            if photos:
+                primary_url = await self.storage.get_url(photos[0].storage_key)
 
             summaries.append(CheckpointSummary(
                 id=cp.id,
@@ -131,7 +129,7 @@ class CheckpointService:
                 body_fat_percentage=cp.body_fat_percentage,
                 notes=cp.notes,
                 tags=cp.tags,
-                photo_count=len(cp.photos),
+                photo_count=len(photos),
                 primary_photo_url=primary_url,
                 created_at=cp.created_at,
             ))
@@ -160,7 +158,6 @@ class CheckpointService:
             notes=data.notes,
             tags=data.tags,
         )
-        await self.session.commit()
         return await self._to_response(checkpoint)
 
     async def delete_checkpoint(
@@ -177,16 +174,16 @@ class CheckpointService:
             )
 
         # Delete photos from storage before soft-deleting the record
-        for photo in checkpoint.photos:
+        photos = await self.repo.get_photos_for_checkpoint(checkpoint_id)
+        for photo in photos:
             await self.storage.delete(photo.storage_key)
 
         await self.repo.soft_delete(checkpoint)
-        await self.session.commit()
 
         logger.info(
             "checkpoint_deleted",
             checkpoint_id=str(checkpoint_id),
-            photos_removed=len(checkpoint.photos),
+            photos_removed=len(photos),
         )
 
     # ── Photo Management ───────────────────────────────────────────────────────
@@ -241,7 +238,6 @@ class CheckpointService:
             original_filename=original_filename,
             label=label,
         )
-        await self.session.commit()
 
         url = await self.storage.get_url(storage_key)
 
@@ -296,7 +292,6 @@ class CheckpointService:
         storage_key = photo.storage_key
         await self.repo.delete_photo(photo)
         await self.storage.delete(storage_key)
-        await self.session.commit()
 
         logger.info("photo_deleted", photo_id=str(photo_id), checkpoint_id=str(checkpoint_id))
 
@@ -414,9 +409,10 @@ class CheckpointService:
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     async def _to_response(self, checkpoint) -> CheckpointResponse:
-        """Convert ORM model to response schema with resolved photo URLs."""
+        """Convert Beanie document to response schema with resolved photo URLs."""
+        photos_data = await self.repo.get_photos_for_checkpoint(checkpoint.id)
         photos = []
-        for photo in sorted(checkpoint.photos, key=lambda p: p.display_order):
+        for photo in photos_data:
             url = await self.storage.get_url(photo.storage_key)
             photos.append(PhotoResponse(
                 id=photo.id,

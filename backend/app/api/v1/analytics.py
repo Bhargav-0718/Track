@@ -8,7 +8,7 @@ Routes:
 """
 from fastapi import APIRouter, Query
 
-from app.api.deps import CurrentUserID, DbSession
+from app.api.deps import CurrentUserID
 from app.schemas.analytics import AnalyticsSummary, StreakInfo, TrendResponse
 from app.services.analytics_service import AnalyticsService
 
@@ -22,7 +22,6 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 )
 async def get_analytics_summary(
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> AnalyticsSummary:
     """
     Complete behavioral analytics for the authenticated user.
@@ -41,7 +40,7 @@ async def get_analytics_summary(
     Use this data to populate the Flutter analytics dashboard.
     Response is computed live — cache on the client for 15-30 minutes.
     """
-    service = AnalyticsService(db)
+    service = AnalyticsService()
     return await service.get_summary(current_user_id)
 
 
@@ -52,7 +51,6 @@ async def get_analytics_summary(
 )
 async def get_trend(
     current_user_id: CurrentUserID,
-    db: DbSession,
     period_days: int = Query(
         default=30,
         ge=7,
@@ -69,7 +67,7 @@ async def get_trend(
     **Usage in Flutter**: Feed directly into fl_chart line charts.
     The `calorie_target` field can be used to render a horizontal target line.
     """
-    service = AnalyticsService(db)
+    service = AnalyticsService()
     return await service.get_trend(current_user_id, period_days=period_days)
 
 
@@ -80,7 +78,6 @@ async def get_trend(
 )
 async def get_streak(
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> StreakInfo:
     """
     Get current and longest logging streak.
@@ -88,5 +85,5 @@ async def get_streak(
     For full analytics, use GET /analytics/summary.
     """
     from datetime import date
-    service = AnalyticsService(db)
+    service = AnalyticsService()
     return await service._compute_streak(current_user_id, date.today())

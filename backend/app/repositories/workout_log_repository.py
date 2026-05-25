@@ -1,19 +1,17 @@
 """
 WorkoutLog repository.
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
+from datetime import timezone as dt_timezone
 from uuid import UUID
-
-from sqlalchemy import and_, desc, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.workout_log import WorkoutLog
 from app.repositories.base import BaseRepository
 
 
 class WorkoutLogRepository(BaseRepository[WorkoutLog]):
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(WorkoutLog, session)
+    def __init__(self) -> None:
+        super().__init__(WorkoutLog)
 
     async def get_logs_for_date(
         self,
@@ -22,21 +20,16 @@ class WorkoutLogRepository(BaseRepository[WorkoutLog]):
     ) -> list[WorkoutLog]:
         """Get all workouts for a user on a specific date."""
         day_start = datetime.combine(target_date, datetime.min.time()).replace(
-            tzinfo=timezone.utc
+            tzinfo=dt_timezone.utc
         )
         day_end = day_start + timedelta(days=1)
 
-        result = await self.session.execute(
-            select(WorkoutLog).where(
-                and_(
-                    WorkoutLog.user_id == user_id,
-                    WorkoutLog.logged_at >= day_start,
-                    WorkoutLog.logged_at < day_end,
-                    WorkoutLog.is_deleted.is_(False),
-                )
-            ).order_by(WorkoutLog.logged_at)
-        )
-        return list(result.scalars().all())
+        return await WorkoutLog.find(
+            WorkoutLog.user_id == user_id,
+            WorkoutLog.logged_at >= day_start,
+            WorkoutLog.logged_at < day_end,
+            WorkoutLog.is_deleted == False,  # noqa: E712
+        ).sort(WorkoutLog.logged_at).to_list()
 
     async def get_logs_paginated(
         self,
@@ -49,40 +42,31 @@ class WorkoutLogRepository(BaseRepository[WorkoutLog]):
         date_to: date | None = None,
     ) -> tuple[list[WorkoutLog], int]:
         """Paginated workout logs with optional filters."""
-        base_filter = and_(
+        filters = [
             WorkoutLog.user_id == user_id,
-            WorkoutLog.is_deleted.is_(False),
-        )
+            WorkoutLog.is_deleted == False,  # noqa: E712
+        ]
 
         if workout_type:
-            base_filter = and_(base_filter, WorkoutLog.workout_type == workout_type)
+            filters.append(WorkoutLog.workout_type == workout_type)
 
         if date_from:
             day_start = datetime.combine(date_from, datetime.min.time()).replace(
-                tzinfo=timezone.utc
+                tzinfo=dt_timezone.utc
             )
-            base_filter = and_(base_filter, WorkoutLog.logged_at >= day_start)
+            filters.append(WorkoutLog.logged_at >= day_start)
 
         if date_to:
             day_end = datetime.combine(date_to, datetime.max.time()).replace(
-                tzinfo=timezone.utc
+                tzinfo=dt_timezone.utc
             )
-            base_filter = and_(base_filter, WorkoutLog.logged_at <= day_end)
+            filters.append(WorkoutLog.logged_at <= day_end)
 
-        count_result = await self.session.execute(
-            select(func.count()).select_from(WorkoutLog).where(base_filter)
-        )
-        total = count_result.scalar_one()
-
+        query = WorkoutLog.find(*filters)
+        total = await query.count()
         offset = (page - 1) * page_size
-        data_result = await self.session.execute(
-            select(WorkoutLog)
-            .where(base_filter)
-            .order_by(desc(WorkoutLog.logged_at))
-            .limit(page_size)
-            .offset(offset)
-        )
-        return list(data_result.scalars().all()), total
+        logs = await query.sort(-WorkoutLog.logged_at).skip(offset).limit(page_size).to_list()
+        return logs, total
 
     async def get_daily_calories_burned(
         self,
@@ -90,43 +74,25 @@ class WorkoutLogRepository(BaseRepository[WorkoutLog]):
         target_date: date,
     ) -> dict:
         """Sum calories burned from workouts for a given day."""
-        day_start = datetime.combine(target_date, datetime.min.time()).replace(
-            tzinfo=timezone.utc
-        )
-        day_end = day_start + timedelta(days=1)
-
-        result = await self.session.execute(
-            select(
-                func.coalesce(func.sum(WorkoutLog.calories_burned), 0.0).label("total_burned"),
-                func.coalesce(func.sum(WorkoutLog.duration_minutes), 0).label("total_minutes"),
-                func.count(WorkoutLog.id).label("count"),
-            ).where(
-                and_(
-                    WorkoutLog.user_id == user_id,
-                    WorkoutLog.logged_at >= day_start,
-                    WorkoutLog.logged_at < day_end,
-                    WorkoutLog.is_deleted.is_(False),
-                )
-            )
-        )
-        row = result.one()
+        logs = await self.get_logs_for_date(user_id, target_date)
         return {
-            "total_calories_burned": float(row.total_burned),
-            "total_minutes": int(row.total_minutes),
-            "count": int(row.count),
+            "total_calories_burned": sum(log.calories_burned or 0.0 for log in logs),
+            "total_minutes": sum(log.duration_minutes for log in logs),
+            "count": len(logs),
         }
 
-    async def health_connect_id_exists(
-        self,
-        health_connect_id: str,
-    ) -> bool:
+    async def health_connect_id_exists(self, health_connect_id: str) -> bool:
         """Check if a Health Connect workout ID has already been synced."""
-        result = await self.session.execute(
-            select(WorkoutLog.id).where(
-                WorkoutLog.health_connect_id == health_connect_id
-            )
+        result = await WorkoutLog.find_one(
+            WorkoutLog.health_connect_id == health_connect_id
         )
-        return result.scalar_one_or_none() is not None
+        return result is not None
+
+    async def get_by_health_connect_id(self, health_connect_id: str) -> WorkoutLog | None:
+        """Fetch existing workout by Health Connect ID."""
+        return await WorkoutLog.find_one(
+            WorkoutLog.health_connect_id == health_connect_id
+        )
 
     async def create_workout_log(
         self,
@@ -144,8 +110,8 @@ class WorkoutLogRepository(BaseRepository[WorkoutLog]):
         logged_at: datetime | None = None,
         health_connect_id: str | None = None,
     ) -> WorkoutLog:
-        """Create a new workout log."""
-        return await self.create(
+        """Create a new workout log document."""
+        log = WorkoutLog(
             user_id=user_id,
             title=title,
             workout_type=workout_type,
@@ -156,6 +122,14 @@ class WorkoutLogRepository(BaseRepository[WorkoutLog]):
             exercises=exercises or [],
             notes=notes,
             raw_input=raw_input,
-            logged_at=logged_at or datetime.now(timezone.utc),
+            logged_at=logged_at or datetime.now(dt_timezone.utc),
             health_connect_id=health_connect_id,
+        )
+        await log.insert()
+        return log
+
+    async def get_by_id_for_user(self, id: UUID, user_id: UUID) -> WorkoutLog | None:
+        return await WorkoutLog.find_one(
+            WorkoutLog.id == id,
+            WorkoutLog.user_id == user_id,
         )

@@ -15,7 +15,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUserID, DbSession
+from app.api.deps import CurrentUserID
 from app.schemas.common import PaginatedResponse
 from app.schemas.food_log import (
     DailyFoodSummary,
@@ -38,13 +38,12 @@ router = APIRouter(prefix="/food-logs", tags=["food-logs"])
 async def create_food_log(
     data: FoodLogCreate,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> FoodLogResponse:
     """
     Log a food entry.
 
     **Quick log mode**: Provide `raw_input` with natural language description.
-    AI estimation is enabled in Phase 2. In Phase 1, also provide `food_name` + `calories`.
+    AI estimation pipeline runs: memory → INDB dataset → LLM fallback.
 
     **Manual mode**: Provide `food_name` + `calories` (and optionally macros).
     Stored directly with `confidence_level: confirmed`.
@@ -52,7 +51,7 @@ async def create_food_log(
     The `logged_at` field defaults to now — pass a custom timestamp to log
     meals that were eaten earlier.
     """
-    service = FoodService(db)
+    service = FoodService()
     return await service.create_log(current_user_id, data)
 
 
@@ -63,7 +62,6 @@ async def create_food_log(
 )
 async def get_recent_foods(
     current_user_id: CurrentUserID,
-    db: DbSession,
     limit: int = Query(default=20, ge=1, le=50),
 ) -> list[FoodLogSummary]:
     """
@@ -71,7 +69,7 @@ async def get_recent_foods(
     Used for quick-add suggestions in the Flutter UI.
     Returns deduplicated foods ordered by most recently logged.
     """
-    service = FoodService(db)
+    service = FoodService()
     return await service.get_recent_foods(current_user_id, limit=limit)
 
 
@@ -82,7 +80,6 @@ async def get_recent_foods(
 )
 async def get_daily_summary(
     current_user_id: CurrentUserID,
-    db: DbSession,
     date: date = Query(default=None, description="Date (YYYY-MM-DD). Defaults to today."),
 ) -> DailyFoodSummary:
     """
@@ -91,7 +88,7 @@ async def get_daily_summary(
     """
     from datetime import datetime, timezone
     target_date = date or datetime.now(timezone.utc).date()
-    service = FoodService(db)
+    service = FoodService()
     return await service.get_daily_summary(current_user_id, target_date)
 
 
@@ -102,7 +99,6 @@ async def get_daily_summary(
 )
 async def list_food_logs(
     current_user_id: CurrentUserID,
-    db: DbSession,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     meal_type: str | None = Query(default=None, description="Filter by meal type"),
@@ -113,7 +109,7 @@ async def list_food_logs(
     List food logs with pagination and optional filtering.
     Results ordered by logged_at descending.
     """
-    service = FoodService(db)
+    service = FoodService()
     logs, total = await service.list_logs(
         current_user_id,
         page=page,
@@ -138,10 +134,9 @@ async def list_food_logs(
 async def get_food_log(
     log_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> FoodLogResponse:
     """Get the full details of a specific food log."""
-    service = FoodService(db)
+    service = FoodService()
     return await service.get_log(log_id, current_user_id)
 
 
@@ -154,18 +149,17 @@ async def update_food_log(
     log_id: UUID,
     data: FoodLogUpdate,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> FoodLogResponse:
     """
     Update a food log entry.
 
     When calories or portion are changed, a correction event is automatically
-    recorded to improve future AI estimates (Phase 4 learning signal).
+    recorded to improve future AI estimates.
 
     Updated entries are marked with `is_corrected: true` and
     `confidence_level: confirmed`.
     """
-    service = FoodService(db)
+    service = FoodService()
     return await service.update_log(log_id, current_user_id, data)
 
 
@@ -177,11 +171,10 @@ async def update_food_log(
 async def delete_food_log(
     log_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> None:
     """
     Soft delete a food log. The daily summary is automatically updated.
     Hard deletion is only possible via data export/deletion request.
     """
-    service = FoodService(db)
+    service = FoodService()
     await service.delete_log(log_id, current_user_id)

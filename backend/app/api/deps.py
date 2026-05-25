@@ -2,33 +2,26 @@
 FastAPI dependency injection functions.
 
 These are the shared dependencies used across all route handlers:
-- get_db: Async database session
-- get_current_user: Authenticated user from JWT token
-- get_current_user_id: Just the UUID (cheaper than full user lookup)
+- get_current_user_id: Authenticated user UUID from JWT token
+- get_current_user: Full user document from MongoDB
 
 Design: Dependencies are thin — they extract from the request and delegate
-to services for business logic. No business logic in deps.py.
+to repositories for lookups. No business logic in deps.py.
 """
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AuthenticationError
 from app.core.security import extract_user_id
-from app.database import get_db
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 
 # ── HTTP Bearer Scheme ─────────────────────────────────────────────────────────
 
 bearer_scheme = HTTPBearer(auto_error=False)
-
-# ── Type Aliases for cleaner route signatures ──────────────────────────────────
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 # ── Auth Dependencies ──────────────────────────────────────────────────────────
@@ -59,13 +52,12 @@ async def get_current_user_id(
 
 async def get_current_user(
     user_id: Annotated[UUID, Depends(get_current_user_id)],
-    db: DbSession,
 ) -> User:
     """
-    Get the full authenticated user from DB.
+    Get the full authenticated user from MongoDB.
     Use get_current_user_id when you only need the UUID (avoids extra DB query).
     """
-    repo = UserRepository(db)
+    repo = UserRepository()
     user = await repo.get_active_user(user_id)
     if not user:
         raise HTTPException(

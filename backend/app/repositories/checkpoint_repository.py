@@ -1,27 +1,15 @@
 """
 CheckpointRepository — data access for progress checkpoints and photos.
-
-Handles:
-- CRUD on ProgressCheckpoint
-- Photo attachment/removal
-- Listing with pagination and filtering
-- Photo primary selection for comparison endpoint
 """
-from datetime import date
+from datetime import date, datetime
+from datetime import timezone as dt_timezone
 from uuid import UUID
-
-from sqlalchemy import and_, desc, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.models.progress_checkpoint import ProgressCheckpoint
 from app.models.progress_photo import ProgressPhoto
 
 
 class CheckpointRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
     # ── Checkpoints ────────────────────────────────────────────────────────────
 
     async def create(
@@ -41,8 +29,7 @@ class CheckpointRepository:
             notes=notes,
             tags=tags or [],
         )
-        self.session.add(checkpoint)
-        await self.session.flush()
+        await checkpoint.insert()
         return checkpoint
 
     async def get_by_id_for_user(
@@ -51,19 +38,12 @@ class CheckpointRepository:
         user_id: UUID,
         load_photos: bool = True,
     ) -> ProgressCheckpoint | None:
-        """Fetch a checkpoint with optional eager-loaded photos."""
-        stmt = select(ProgressCheckpoint).where(
-            and_(
-                ProgressCheckpoint.id == checkpoint_id,
-                ProgressCheckpoint.user_id == user_id,
-                ProgressCheckpoint.is_deleted.is_(False),
-            )
+        """Fetch a checkpoint (photos loaded separately if needed)."""
+        return await ProgressCheckpoint.find_one(
+            ProgressCheckpoint.id == checkpoint_id,
+            ProgressCheckpoint.user_id == user_id,
+            ProgressCheckpoint.is_deleted == False,  # noqa: E712
         )
-        if load_photos:
-            stmt = stmt.options(selectinload(ProgressCheckpoint.photos))
-
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
 
     async def list_for_user(
         self,
@@ -76,37 +56,26 @@ class CheckpointRepository:
         tags: list[str] | None = None,
     ) -> tuple[list[ProgressCheckpoint], int]:
         """Paginated list of checkpoints, newest first."""
-        filters = [
+        all_checkpoints = await ProgressCheckpoint.find(
             ProgressCheckpoint.user_id == user_id,
-            ProgressCheckpoint.is_deleted.is_(False),
-        ]
+            ProgressCheckpoint.is_deleted == False,  # noqa: E712
+        ).to_list()
+
+        # Apply Python-side date filters
         if date_from:
-            filters.append(ProgressCheckpoint.checkpoint_date >= date_from)
+            all_checkpoints = [c for c in all_checkpoints if c.checkpoint_date >= date_from]
         if date_to:
-            filters.append(ProgressCheckpoint.checkpoint_date <= date_to)
+            all_checkpoints = [c for c in all_checkpoints if c.checkpoint_date <= date_to]
         if tags:
-            # Filter checkpoints that have ALL specified tags
-            for tag in tags:
-                filters.append(ProgressCheckpoint.tags.contains([tag]))
+            all_checkpoints = [
+                c for c in all_checkpoints
+                if all(t in c.tags for t in tags)
+            ]
 
-        # Total count
-        count_stmt = select(func.count(ProgressCheckpoint.id)).where(and_(*filters))
-        total = (await self.session.execute(count_stmt)).scalar_one()
-
-        # Data with primary photo
+        all_checkpoints.sort(key=lambda c: c.checkpoint_date, reverse=True)
+        total = len(all_checkpoints)
         offset = (page - 1) * page_size
-        stmt = (
-            select(ProgressCheckpoint)
-            .where(and_(*filters))
-            .order_by(desc(ProgressCheckpoint.checkpoint_date))
-            .offset(offset)
-            .limit(page_size)
-            .options(selectinload(ProgressCheckpoint.photos))
-        )
-        result = await self.session.execute(stmt)
-        checkpoints = list(result.scalars().all())
-
-        return checkpoints, total
+        return all_checkpoints[offset:offset + page_size], total
 
     async def update(
         self,
@@ -128,12 +97,14 @@ class CheckpointRepository:
             checkpoint.notes = notes
         if tags is not None:
             checkpoint.tags = tags
-        await self.session.flush()
+        checkpoint.updated_at = datetime.now(dt_timezone.utc)
+        await checkpoint.save()
         return checkpoint
 
     async def soft_delete(self, checkpoint: ProgressCheckpoint) -> None:
         checkpoint.is_deleted = True
-        await self.session.flush()
+        checkpoint.updated_at = datetime.now(dt_timezone.utc)
+        await checkpoint.save()
 
     # ── Photos ─────────────────────────────────────────────────────────────────
 
@@ -148,15 +119,10 @@ class CheckpointRepository:
         original_filename: str | None = None,
         label: str | None = None,
     ) -> ProgressPhoto:
-        """
-        Add a photo to a checkpoint.
-        display_order is auto-assigned as max existing + 1.
-        """
-        # Get current max display_order for this checkpoint
-        count_stmt = select(func.count(ProgressPhoto.id)).where(
+        """Add a photo to a checkpoint. display_order = existing count."""
+        existing_count = await ProgressPhoto.find(
             ProgressPhoto.checkpoint_id == checkpoint_id
-        )
-        existing_count = (await self.session.execute(count_stmt)).scalar_one()
+        ).count()
 
         photo = ProgressPhoto(
             checkpoint_id=checkpoint_id,
@@ -166,11 +132,10 @@ class CheckpointRepository:
             file_size_bytes=file_size_bytes,
             width_px=width_px,
             height_px=height_px,
-            display_order=existing_count,   # 0-indexed
+            display_order=existing_count,
             label=label,
         )
-        self.session.add(photo)
-        await self.session.flush()
+        await photo.insert()
         return photo
 
     async def get_photo_by_id(
@@ -178,19 +143,14 @@ class CheckpointRepository:
         photo_id: UUID,
         user_id: UUID,
     ) -> ProgressPhoto | None:
-        stmt = select(ProgressPhoto).where(
-            and_(
-                ProgressPhoto.id == photo_id,
-                ProgressPhoto.user_id == user_id,
-            )
+        return await ProgressPhoto.find_one(
+            ProgressPhoto.id == photo_id,
+            ProgressPhoto.user_id == user_id,
         )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
 
     async def delete_photo(self, photo: ProgressPhoto) -> None:
-        """Hard delete the photo record (actual file deletion is handled by StorageBackend)."""
-        await self.session.delete(photo)
-        await self.session.flush()
+        """Hard delete the photo record."""
+        await photo.delete()
 
     async def get_primary_photo(
         self,
@@ -198,16 +158,22 @@ class CheckpointRepository:
         user_id: UUID,
     ) -> ProgressPhoto | None:
         """Get the primary (display_order=0) photo for a checkpoint."""
-        stmt = (
-            select(ProgressPhoto)
-            .where(
-                and_(
-                    ProgressPhoto.checkpoint_id == checkpoint_id,
-                    ProgressPhoto.user_id == user_id,
-                )
-            )
-            .order_by(ProgressPhoto.display_order)
-            .limit(1)
-        )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        photos = await ProgressPhoto.find(
+            ProgressPhoto.checkpoint_id == checkpoint_id,
+            ProgressPhoto.user_id == user_id,
+        ).to_list()
+        if not photos:
+            return None
+        photos.sort(key=lambda p: p.display_order)
+        return photos[0]
+
+    async def get_photos_for_checkpoint(
+        self,
+        checkpoint_id: UUID,
+    ) -> list[ProgressPhoto]:
+        """Get all photos for a checkpoint, ordered by display_order."""
+        photos = await ProgressPhoto.find(
+            ProgressPhoto.checkpoint_id == checkpoint_id
+        ).to_list()
+        photos.sort(key=lambda p: p.display_order)
+        return photos

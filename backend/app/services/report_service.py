@@ -17,10 +17,9 @@ without making AI API calls.
 from datetime import date, datetime, timezone
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.exceptions import ResourceNotFoundError, ValidationError
 from app.core.logging import get_logger
+from app.models.daily_report import DailyReport
 from app.repositories.daily_report_repository import DailyReportRepository
 from app.schemas.report import (
     DailyReportResponse,
@@ -34,10 +33,9 @@ logger = get_logger(__name__)
 
 
 class ReportService:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-        self.report_repo = DailyReportRepository(session)
-        self.analytics = AnalyticsService(session)
+    def __init__(self) -> None:
+        self.report_repo = DailyReportRepository()
+        self.analytics = AnalyticsService()
 
     async def get_or_generate(
         self,
@@ -135,7 +133,6 @@ class ReportService:
             "fat_g": metrics["actual_fat_g"],
         }
 
-        # Compute consistency score for storage
         consistency_score = metrics["consistency_7d"]  # 0.0–1.0
 
         # Upsert report in DB
@@ -153,7 +150,6 @@ class ReportService:
             behavioral_observations=ai_output.behavioral_observations,
             report_style=style,
         )
-        await self.session.commit()
 
         return self._to_response(report)
 
@@ -197,7 +193,6 @@ class ReportService:
         """Mark a report as viewed (called when Flutter opens the report card)."""
         report = await self._get_report_for_user(user_id, report_id)
         report = await self.report_repo.mark_shown(report)
-        await self.session.commit()
         return self._to_response(report)
 
     async def rate_report(
@@ -221,7 +216,6 @@ class ReportService:
             entity_type="daily_report",
             metadata={"rating": rating, "report_style": report.report_style},
         )
-        await self.session.commit()
 
         logger.info(
             "report_rated",
@@ -233,19 +227,12 @@ class ReportService:
 
     # ── Helpers ────────────────────────────────────────────────────────────────
 
-    async def _get_report_for_user(self, user_id: UUID, report_id: UUID):
-        from sqlalchemy import and_, select
-        from app.models.daily_report import DailyReport
-
-        result = await self.session.execute(
-            select(DailyReport).where(
-                and_(
-                    DailyReport.id == report_id,
-                    DailyReport.user_id == user_id,
-                )
-            )
+    async def _get_report_for_user(self, user_id: UUID, report_id: UUID) -> DailyReport:
+        """Fetch a report document, verifying ownership."""
+        report = await DailyReport.find_one(
+            DailyReport.id == report_id,
+            DailyReport.user_id == user_id,
         )
-        report = result.scalar_one_or_none()
         if not report:
             raise ResourceNotFoundError(
                 message=f"Report {report_id} not found",
@@ -254,7 +241,7 @@ class ReportService:
             )
         return report
 
-    def _to_response(self, report) -> DailyReportResponse:
+    def _to_response(self, report: DailyReport) -> DailyReportResponse:
         return DailyReportResponse(
             id=report.id,
             report_date=report.report_date,

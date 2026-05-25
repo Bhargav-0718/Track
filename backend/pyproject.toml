@@ -15,11 +15,9 @@ dependencies = [
     "fastapi[all]>=0.115.0",
     "uvicorn[standard]>=0.32.0",
 
-    # --- Database ---
-    "sqlalchemy[asyncio]>=2.0.36",
-    "asyncpg>=0.30.0",
-    "alembic>=1.14.0",
-    "pgvector>=0.3.6",
+    # --- Database (MongoDB) ---
+    "motor>=3.6.0",
+    "beanie>=1.26.0",
 
     # --- Validation ---
     "pydantic>=2.10.0",
@@ -55,6 +53,7 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=6.0.0",
+    "pytest-env>=1.1.0",
     "httpx>=0.28.0",             # For TestClient
     "factory-boy>=3.3.0",        # Test fixtures
     "faker>=33.0.0",
@@ -86,9 +85,10 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 env = [
     "ENVIRONMENT=testing",
-    "DATABASE_URL=postgresql+asyncpg://track_user:track_password@localhost:5432/track_test_db",
+    "MONGODB_URL=mongodb+srv://REDACTED:REDACTED@recal.c562kny.mongodb.net/?retryWrites=true&w=majority&appName=Recal",
+    "MONGODB_DB_NAME=track_test_db",
 ]
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["tests/*", "migrations/*"]
+omit = ["tests/*"]
