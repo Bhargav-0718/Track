@@ -30,10 +30,10 @@ const ACTIONS = [
   },
   {
     icon: MessageSquare,
-    label: "Ask AI",
-    description: "Get recommendations",
+    label: "Ask Coach",
+    description: "Chat with Vajra — your coach",
     color: "bg-violet-500",
-    href: "/insights",
+    href: "/coach",
   },
 ] as const;
 
