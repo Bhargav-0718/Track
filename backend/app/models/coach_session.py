@@ -43,7 +43,9 @@ class CoachSession(BaseDocument):
     @classmethod
     async def for_user(cls, user_id: UUID) -> "CoachSession":
         """Get the existing session for a user, or create a new one."""
-        session = await cls.find_one(cls.user_id == user_id)
+        # Use raw dict query — Beanie's expression field descriptor doesn't
+        # resolve cls.user_id correctly for Annotated fields inside classmethods.
+        session = await cls.find_one({"user_id": user_id})
         if session is None:
             session = cls(user_id=user_id)
             await session.insert()

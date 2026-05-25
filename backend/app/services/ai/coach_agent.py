@@ -273,10 +273,7 @@ async def _exec_get_today_context(user_id: UUID) -> dict:
     workouts = await workout_repo.get_logs_for_date(user_id, today)
 
     # Steps
-    step_log = await StepLog.find_one(
-        StepLog.user_id == user_id,
-        StepLog.date == today,
-    )
+    step_log = await StepLog.find_one({"user_id": user_id, "date": today})
 
     # User targets
     user = await User.find_one(User.id == user_id)
@@ -347,8 +344,7 @@ async def _exec_get_weekly_summary(user_id: UUID) -> dict:
     avg_calories = round(total_calories / max(days_with_data, 1))
 
     step_logs = await StepLog.find(
-        StepLog.user_id == user_id,
-        StepLog.date >= today - timedelta(days=6),
+        {"user_id": user_id, "date": {"$gte": today - timedelta(days=6)}}
     ).to_list()
     avg_steps = round(sum(s.steps for s in step_logs) / max(len(step_logs), 1))
 
@@ -467,10 +463,7 @@ async def _exec_log_steps(steps: int, user_id: UUID) -> tuple[dict, dict]:
     import datetime as dt
 
     today = dt.date.today()
-    existing = await StepLog.find_one(
-        StepLog.user_id == user_id,
-        StepLog.date == today,
-    )
+    existing = await StepLog.find_one({"user_id": user_id, "date": today})
     if existing:
         await existing.delete()
 
