@@ -11,14 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install pip-tools for reproducible installs
 RUN pip install --no-cache-dir --upgrade pip
 
-# Copy dependency files first (layer cache optimization)
-COPY pyproject.toml .
-
-# Install dependencies
-RUN pip install --no-cache-dir -e ".[dev]"
-
-# Copy application code
+# Copy source first so pip install has the package available
 COPY . .
+
+# Install dependencies (no -e: regular install, source already present)
+RUN pip install --no-cache-dir ".[dev]"
 
 EXPOSE 8000
 
