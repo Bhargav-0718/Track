@@ -2,12 +2,12 @@
 One-time INDB nutrition data importer.
 
 Imports Indian_Food_Nutrition_Processed.csv (1,014 dishes from the Indian
-Nutrient Databank) into the nutrition_cache table.
+Nutrient Databank) into the nutrition_cache MongoDB collection.
 
 Run once after initial database setup:
     python scripts/import_nutrition_data.py
 
-Safe to re-run — uses INSERT OR SKIP on external_id conflict.
+Safe to re-run — skips existing entries by (source, external_id).
 Data source: INDB (Indian Nutrient Databank), open-access, peer-reviewed.
 Paper: https://pmc.ncbi.nlm.nih.gov/articles/PMC11277795/
 """
@@ -20,7 +20,7 @@ from pathlib import Path
 # Make app importable from scripts/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.database import AsyncSessionLocal
+from app.database import init_db
 from app.models.nutrition_cache import NutritionCache
 
 
@@ -45,7 +45,7 @@ def parse_float(value: str) -> float | None:
 
 def parse_row(row: dict) -> NutritionCache | None:
     """
-    Parse a single CSV row into a NutritionCache model.
+    Parse a single CSV row into a NutritionCache document.
     Returns None if the row is invalid (missing required fields).
     """
     dish_name = row.get("Dish Name", "").strip()
@@ -70,7 +70,6 @@ def parse_row(row: dict) -> NutritionCache | None:
         fat_per_100g=parse_float(row.get("Fats (g)", "")),
         fiber_per_100g=parse_float(row.get("Fibre (g)", "")),
         sodium_per_100g=parse_float(row.get("Sodium (mg)", "")),
-        # Store full row in raw_data for future use
         raw_data={
             "free_sugar_g": parse_float(row.get("Free Sugar (g)", "")),
             "calcium_mg": parse_float(row.get("Calcium (mg)", "")),
@@ -84,7 +83,7 @@ def parse_row(row: dict) -> NutritionCache | None:
 
 
 async def import_indb(csv_path: str = "data/Indian_Food_Nutrition_Processed.csv") -> None:
-    """Import INDB CSV data into the nutrition_cache table."""
+    """Import INDB CSV data into the nutrition_cache collection."""
     csv_file = Path(csv_path)
     if not csv_file.exists():
         print(f"ERROR: File not found: {csv_path}")
@@ -98,79 +97,57 @@ async def import_indb(csv_path: str = "data/Indian_Food_Nutrition_Processed.csv"
 
     print(f"Found {len(rows)} rows to import.")
 
+    # Initialise Beanie so document models are registered
+    await init_db()
+
     inserted = 0
     skipped = 0
     errors = 0
 
-    async with AsyncSessionLocal() as session:
-        for i, row in enumerate(rows, 1):
-            try:
-                entry = parse_row(row)
-                if entry is None:
-                    skipped += 1
-                    continue
+    for i, row in enumerate(rows, 1):
+        try:
+            entry = parse_row(row)
+            if entry is None:
+                skipped += 1
+                continue
 
-                # Check if already exists (safe re-run)
-                from sqlalchemy import select
-                existing = await session.execute(
-                    select(NutritionCache).where(
-                        NutritionCache.source == "indb",
-                        NutritionCache.external_id == entry.external_id,
-                    )
-                )
-                if existing.scalar_one_or_none():
-                    skipped += 1
-                    continue
+            # Skip if already exists — safe re-run
+            existing = await NutritionCache.find_one(
+                NutritionCache.source == "indb",
+                NutritionCache.external_id == entry.external_id,
+            )
+            if existing:
+                skipped += 1
+                continue
 
-                session.add(entry)
-                inserted += 1
+            await entry.insert()
+            inserted += 1
 
-                # Commit in batches of 50
-                if inserted % 50 == 0:
-                    await session.commit()
-                    print(f"  Committed {inserted} entries...")
+            if inserted % 50 == 0:
+                print(f"  Inserted {inserted} entries...")
 
-            except Exception as e:
-                print(f"  ERROR on row {i} ({row.get('Dish Name', '?')}): {e}")
-                errors += 1
-
-        # Final commit
-        if inserted % 50 != 0:
-            await session.commit()
+        except Exception as e:
+            print(f"  ERROR on row {i} ({row.get('Dish Name', '?')}): {e}")
+            errors += 1
 
     print()
     print("=" * 50)
-    print(f"Import complete!")
+    print("Import complete!")
     print(f"  Inserted: {inserted}")
     print(f"  Skipped (duplicates/invalid): {skipped}")
     print(f"  Errors: {errors}")
     print(f"  Total processed: {len(rows)}")
 
-    if inserted > 0:
-        print()
-        print("Next step: Generate trgm index for fast fuzzy search.")
-        print("Run: alembic upgrade head")
-
 
 async def verify_import() -> None:
     """Quick verification that data was imported correctly."""
-    from sqlalchemy import func, select
-    async with AsyncSessionLocal() as session:
-        count_result = await session.execute(
-            select(func.count()).select_from(NutritionCache).where(
-                NutritionCache.source == "indb"
-            )
-        )
-        count = count_result.scalar_one()
+    count = await NutritionCache.find(
+        NutritionCache.source == "indb"
+    ).count()
 
-        # Test fuzzy search
-        from sqlalchemy import text
-        test_result = await session.execute(
-            select(NutritionCache).where(
-                NutritionCache.source == "indb"
-            ).order_by(NutritionCache.food_name).limit(5)
-        )
-        samples = test_result.scalars().all()
+    samples = await NutritionCache.find(
+        NutritionCache.source == "indb"
+    ).sort(NutritionCache.food_name).limit(5).to_list()
 
     print(f"\nVerification:")
     print(f"  Total INDB entries in DB: {count}")

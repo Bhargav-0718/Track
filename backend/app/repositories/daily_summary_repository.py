@@ -1,20 +1,17 @@
 """
 DailySummary repository — upsert-heavy operations for maintaining daily aggregates.
 """
-from datetime import date
+from datetime import date, datetime
+from datetime import timezone as dt_timezone
 from uuid import UUID
-
-from sqlalchemy import and_, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.daily_summary import DailySummary
 from app.repositories.base import BaseRepository
 
 
 class DailySummaryRepository(BaseRepository[DailySummary]):
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(DailySummary, session)
+    def __init__(self) -> None:
+        super().__init__(DailySummary)
 
     async def get_for_date(
         self,
@@ -22,15 +19,10 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
         target_date: date,
     ) -> DailySummary | None:
         """Get the daily summary for a specific user and date."""
-        result = await self.session.execute(
-            select(DailySummary).where(
-                and_(
-                    DailySummary.user_id == user_id,
-                    DailySummary.date == target_date,
-                )
-            )
+        return await DailySummary.find_one(
+            DailySummary.user_id == user_id,
+            DailySummary.date == target_date,
         )
-        return result.scalar_one_or_none()
 
     async def get_range(
         self,
@@ -39,18 +31,13 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
         date_to: date,
     ) -> list[DailySummary]:
         """Get daily summaries for a date range (inclusive)."""
-        result = await self.session.execute(
-            select(DailySummary)
-            .where(
-                and_(
-                    DailySummary.user_id == user_id,
-                    DailySummary.date >= date_from,
-                    DailySummary.date <= date_to,
-                )
-            )
-            .order_by(DailySummary.date)
-        )
-        return list(result.scalars().all())
+        all_summaries = await DailySummary.find(
+            DailySummary.user_id == user_id,
+        ).to_list()
+        return [
+            s for s in all_summaries
+            if date_from <= s.date <= date_to
+        ]
 
     async def upsert_nutrition(
         self,
@@ -64,10 +51,7 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
         total_fiber_g: float,
         food_log_count: int,
     ) -> DailySummary:
-        """
-        Upsert nutrition totals for a day.
-        Called after every food log create/update/delete.
-        """
+        """Upsert nutrition totals for a day."""
         existing = await self.get_for_date(user_id, target_date)
 
         if existing:
@@ -77,13 +61,12 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
             existing.total_fat_g = total_fat_g
             existing.total_fiber_g = total_fiber_g
             existing.food_log_count = food_log_count
-            # Recompute net
             existing.net_calories = total_calories_in - existing.total_calories_out
-            await self.session.flush()
-            await self.session.refresh(existing)
+            existing.updated_at = datetime.now(dt_timezone.utc)
+            await existing.save()
             return existing
         else:
-            return await self.create(
+            summary = DailySummary(
                 user_id=user_id,
                 date=target_date,
                 total_calories_in=total_calories_in,
@@ -94,6 +77,8 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
                 food_log_count=food_log_count,
                 net_calories=total_calories_in,
             )
+            await summary.insert()
+            return summary
 
     async def upsert_workout(
         self,
@@ -103,27 +88,26 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
         total_calories_out: float,
         workout_count: int,
     ) -> DailySummary:
-        """
-        Upsert workout totals for a day.
-        Called after every workout log create/update/delete.
-        """
+        """Upsert workout totals for a day."""
         existing = await self.get_for_date(user_id, target_date)
 
         if existing:
             existing.total_calories_out = total_calories_out
             existing.workout_count = workout_count
             existing.net_calories = existing.total_calories_in - total_calories_out
-            await self.session.flush()
-            await self.session.refresh(existing)
+            existing.updated_at = datetime.now(dt_timezone.utc)
+            await existing.save()
             return existing
         else:
-            return await self.create(
+            summary = DailySummary(
                 user_id=user_id,
                 date=target_date,
                 total_calories_out=total_calories_out,
                 workout_count=workout_count,
                 net_calories=-total_calories_out,
             )
+            await summary.insert()
+            return summary
 
     async def upsert_health_connect(
         self,
@@ -135,7 +119,6 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
         activity_calories: float | None,
     ) -> DailySummary:
         """Update Health Connect data for a day."""
-        from datetime import datetime, timezone
         existing = await self.get_for_date(user_id, target_date)
 
         if existing:
@@ -146,16 +129,19 @@ class DailySummaryRepository(BaseRepository[DailySummary]):
             if activity_calories is not None:
                 existing.activity_calories = activity_calories
             existing.health_connect_synced = True
-            existing.last_synced_at = datetime.now(timezone.utc)
-            await self.session.flush()
-            await self.session.refresh(existing)
+            existing.last_synced_at = datetime.now(dt_timezone.utc)
+            existing.updated_at = datetime.now(dt_timezone.utc)
+            await existing.save()
             return existing
         else:
-            return await self.create(
+            summary = DailySummary(
                 user_id=user_id,
                 date=target_date,
                 steps=steps,
                 active_minutes=active_minutes,
                 activity_calories=activity_calories,
                 health_connect_synced=True,
+                last_synced_at=datetime.now(dt_timezone.utc),
             )
+            await summary.insert()
+            return summary

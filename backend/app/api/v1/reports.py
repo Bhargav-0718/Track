@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, status
 
-from app.api.deps import CurrentUserID, DbSession
+from app.api.deps import CurrentUserID
 from app.schemas.report import (
     DailyReportResponse,
     DailyReportSummary,
@@ -34,7 +34,6 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 async def generate_report(
     data: ReportGenerateRequest,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> DailyReportResponse:
     """
     Generate an AI-powered daily report.
@@ -59,7 +58,7 @@ async def generate_report(
     Defaults to your saved preference (set in user preferences).
     The first call of the day triggers an AI API call (~2-4 seconds).
     """
-    service = ReportService(db)
+    service = ReportService()
     return await service.get_or_generate(
         user_id=current_user_id,
         report_date=data.report_date,
@@ -75,7 +74,6 @@ async def generate_report(
 )
 async def list_reports(
     current_user_id: CurrentUserID,
-    db: DbSession,
     limit: int = 30,
     offset: int = 0,
 ) -> list[DailyReportSummary]:
@@ -83,7 +81,7 @@ async def list_reports(
     List past daily reports, newest first.
     Returns lightweight summaries — use GET /reports/{date} for full content.
     """
-    service = ReportService(db)
+    service = ReportService()
     return await service.list_reports(current_user_id, limit=limit, offset=offset)
 
 
@@ -95,14 +93,13 @@ async def list_reports(
 async def get_report(
     report_date: date,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> DailyReportResponse:
     """
     Get the full report for a specific date (YYYY-MM-DD).
     Returns 404 if no report has been generated for that date yet.
     Use POST /reports/generate to create one.
     """
-    service = ReportService(db)
+    service = ReportService()
     return await service.get_report(current_user_id, report_date)
 
 
@@ -114,13 +111,12 @@ async def get_report(
 async def mark_report_shown(
     report_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> DailyReportResponse:
     """
     Mark a report as viewed. Call this when the Flutter UI displays the report card.
     Records `shown_at` timestamp for engagement analytics.
     """
-    service = ReportService(db)
+    service = ReportService()
     return await service.mark_shown(current_user_id, report_id)
 
 
@@ -133,7 +129,6 @@ async def rate_report(
     report_id: UUID,
     data: ReportRateRequest,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> DailyReportResponse:
     """
     Rate a daily report from 1-5.
@@ -142,5 +137,5 @@ async def rate_report(
     A 5-star rating means the style/content worked well for you today.
     Low ratings indicate the style should be adjusted.
     """
-    service = ReportService(db)
+    service = ReportService()
     return await service.rate_report(current_user_id, report_id, data.rating)

@@ -1,21 +1,15 @@
 """
 DailyReportRepository — data access for daily reports and behavior events.
 """
-from datetime import date, datetime, timezone
+from datetime import date, datetime
+from datetime import timezone as dt_timezone
 from uuid import UUID
-
-from sqlalchemy import and_, desc, select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.behavior_event import BehaviorEvent
 from app.models.daily_report import DailyReport
 
 
 class DailyReportRepository:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-
     # ── DailyReport ────────────────────────────────────────────────────────────
 
     async def get_for_date(
@@ -23,14 +17,10 @@ class DailyReportRepository:
         user_id: UUID,
         report_date: date,
     ) -> DailyReport | None:
-        stmt = select(DailyReport).where(
-            and_(
-                DailyReport.user_id == user_id,
-                DailyReport.report_date == report_date,
-            )
+        return await DailyReport.find_one(
+            DailyReport.user_id == user_id,
+            DailyReport.report_date == report_date,
         )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
 
     async def upsert(
         self,
@@ -49,41 +39,42 @@ class DailyReportRepository:
         report_style: str = "motivational",
         generation_model: str = "gpt-4o-mini",
     ) -> DailyReport:
-        """
-        Insert or update (overwrite) a daily report for the given date.
-        Uses PostgreSQL ON CONFLICT DO UPDATE.
-        """
-        values = {
-            "user_id": user_id,
-            "report_date": report_date,
-            "calorie_summary": calorie_summary,
-            "workout_summary": workout_summary,
-            "macro_summary": macro_summary,
-            "consistency_score": consistency_score,
-            "streak_days": streak_days,
-            "weekly_consistency": weekly_consistency,
-            "insights_text": insights_text,
-            "motivation_message": motivation_message,
-            "behavioral_observations": behavioral_observations or [],
-            "report_style": report_style,
-            "generation_model": generation_model,
-        }
+        """Insert or update (overwrite) a daily report for the given date."""
+        existing = await self.get_for_date(user_id, report_date)
 
-        stmt = (
-            pg_insert(DailyReport)
-            .values(**values)
-            .on_conflict_do_update(
-                constraint="uq_daily_reports_user_date",
-                set_={
-                    k: v for k, v in values.items()
-                    if k not in ("user_id", "report_date")
-                },
+        if existing:
+            existing.calorie_summary = calorie_summary
+            existing.workout_summary = workout_summary
+            existing.macro_summary = macro_summary
+            existing.consistency_score = consistency_score
+            existing.streak_days = streak_days
+            existing.weekly_consistency = weekly_consistency
+            existing.insights_text = insights_text
+            existing.motivation_message = motivation_message
+            existing.behavioral_observations = behavioral_observations or []
+            existing.report_style = report_style
+            existing.generation_model = generation_model
+            existing.updated_at = datetime.now(dt_timezone.utc)
+            await existing.save()
+            return existing
+        else:
+            report = DailyReport(
+                user_id=user_id,
+                report_date=report_date,
+                calorie_summary=calorie_summary,
+                workout_summary=workout_summary,
+                macro_summary=macro_summary,
+                consistency_score=consistency_score,
+                streak_days=streak_days,
+                weekly_consistency=weekly_consistency,
+                insights_text=insights_text,
+                motivation_message=motivation_message,
+                behavioral_observations=behavioral_observations or [],
+                report_style=report_style,
+                generation_model=generation_model,
             )
-            .returning(DailyReport)
-        )
-        result = await self.session.execute(stmt)
-        await self.session.flush()
-        return result.scalar_one()
+            await report.insert()
+            return report
 
     async def list_for_user(
         self,
@@ -93,27 +84,24 @@ class DailyReportRepository:
         offset: int = 0,
     ) -> list[DailyReport]:
         """Get report history, newest first."""
-        stmt = (
-            select(DailyReport)
-            .where(DailyReport.user_id == user_id)
-            .order_by(desc(DailyReport.report_date))
-            .offset(offset)
-            .limit(limit)
-        )
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
+        reports = await DailyReport.find(
+            DailyReport.user_id == user_id,
+        ).sort(-DailyReport.report_date).skip(offset).limit(limit).to_list()
+        return reports
 
     async def mark_shown(self, report: DailyReport) -> DailyReport:
         """Mark a report as viewed."""
         report.was_shown = True
-        report.shown_at = datetime.now(timezone.utc)
-        await self.session.flush()
+        report.shown_at = datetime.now(dt_timezone.utc)
+        report.updated_at = datetime.now(dt_timezone.utc)
+        await report.save()
         return report
 
     async def set_rating(self, report: DailyReport, rating: int) -> DailyReport:
         """Store user's rating (1-5)."""
         report.user_rating = rating
-        await self.session.flush()
+        report.updated_at = datetime.now(dt_timezone.utc)
+        await report.save()
         return report
 
     # ── BehaviorEvent ──────────────────────────────────────────────────────────
@@ -133,6 +121,5 @@ class DailyReportRepository:
             entity_type=entity_type,
             metadata_=metadata or {},
         )
-        self.session.add(event)
-        await self.session.flush()
+        await event.insert()
         return event

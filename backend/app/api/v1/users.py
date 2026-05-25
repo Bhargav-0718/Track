@@ -9,7 +9,7 @@ Routes:
 """
 from fastapi import APIRouter, status
 
-from app.api.deps import CurrentUser, CurrentUserID, DbSession
+from app.api.deps import CurrentUser, CurrentUserID
 from app.schemas.user import AuthResponse, LoginRequest, UserCreate, UserProfile, UserUpdate
 from app.services.user_service import UserService
 
@@ -25,14 +25,13 @@ router = APIRouter()
 )
 async def register(
     data: UserCreate,
-    db: DbSession,
 ) -> AuthResponse:
     """
     Register a new user account.
 
     Returns a JWT access token immediately — no email verification in Phase 1.
     """
-    service = UserService(db)
+    service = UserService()
     return await service.register(data)
 
 
@@ -44,10 +43,9 @@ async def register(
 )
 async def login(
     data: LoginRequest,
-    db: DbSession,
 ) -> AuthResponse:
     """Authenticate and receive a JWT access token."""
-    service = UserService(db)
+    service = UserService()
     return await service.login(data)
 
 
@@ -61,7 +59,6 @@ async def get_my_profile(
     current_user: CurrentUser,
 ) -> UserProfile:
     """Get the authenticated user's profile."""
-    from app.schemas.user import UserProfile
     return UserProfile.model_validate(current_user)
 
 
@@ -74,7 +71,6 @@ async def get_my_profile(
 async def update_my_profile(
     data: UserUpdate,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> UserProfile:
     """
     Update user profile fields.
@@ -82,5 +78,5 @@ async def update_my_profile(
     If physical stats (weight, height, age) are updated and no manual
     calorie target exists, the system will auto-calculate TDEE.
     """
-    service = UserService(db)
+    service = UserService()
     return await service.update_profile(current_user_id, data)

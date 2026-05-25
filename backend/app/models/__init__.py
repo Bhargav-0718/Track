@@ -1,10 +1,8 @@
 """
-ORM model imports.
+Beanie document model imports.
 
-Import all models here so Alembic can discover them during migrations.
-The import order matters for foreign key resolution in some edge cases.
+Import all documents here so they can be referenced in one place.
 """
-from app.models.base import Base
 from app.models.behavior_event import BehaviorEvent
 from app.models.correction_event import CorrectionEvent
 from app.models.daily_report import DailyReport
@@ -20,7 +18,6 @@ from app.models.user_preference import UserPreference
 from app.models.workout_log import WorkoutLog
 
 __all__ = [
-    "Base",
     "User",
     "UserPreference",
     "FoodLog",

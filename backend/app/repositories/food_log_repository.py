@@ -1,19 +1,17 @@
 """
-FoodLog repository — all SQL for food log data access.
+FoodLog repository — all Beanie queries for food log data access.
 """
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
+from datetime import timezone as dt_timezone
 from uuid import UUID
-
-from sqlalchemy import and_, desc, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.food_log import FoodLog
 from app.repositories.base import BaseRepository
 
 
 class FoodLogRepository(BaseRepository[FoodLog]):
-    def __init__(self, session: AsyncSession) -> None:
-        super().__init__(FoodLog, session)
+    def __init__(self) -> None:
+        super().__init__(FoodLog)
 
     async def get_logs_for_date(
         self,
@@ -23,26 +21,20 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         include_deleted: bool = False,
     ) -> list[FoodLog]:
         """Get all food logs for a user on a specific date."""
-        # Build date range in UTC (logs are stored as TIMESTAMPTZ)
         day_start = datetime.combine(target_date, datetime.min.time()).replace(
-            tzinfo=timezone.utc
+            tzinfo=dt_timezone.utc
         )
         day_end = day_start + timedelta(days=1)
 
-        query = select(FoodLog).where(
-            and_(
-                FoodLog.user_id == user_id,
-                FoodLog.logged_at >= day_start,
-                FoodLog.logged_at < day_end,
-            )
-        )
-
+        filters = [
+            FoodLog.user_id == user_id,
+            FoodLog.logged_at >= day_start,
+            FoodLog.logged_at < day_end,
+        ]
         if not include_deleted:
-            query = query.where(FoodLog.is_deleted.is_(False))
+            filters.append(FoodLog.is_deleted == False)  # noqa: E712
 
-        query = query.order_by(FoodLog.logged_at)
-        result = await self.session.execute(query)
-        return list(result.scalars().all())
+        return await FoodLog.find(*filters).sort(FoodLog.logged_at).to_list()
 
     async def get_logs_paginated(
         self,
@@ -54,46 +46,32 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         date_from: date | None = None,
         date_to: date | None = None,
     ) -> tuple[list[FoodLog], int]:
-        """
-        Get paginated food logs for a user with optional filters.
-        Returns (logs, total_count).
-        """
-        base_filter = and_(
+        """Paginated food logs with optional filters. Returns (logs, total_count)."""
+        filters = [
             FoodLog.user_id == user_id,
-            FoodLog.is_deleted.is_(False),
-        )
+            FoodLog.is_deleted == False,  # noqa: E712
+        ]
 
         if meal_type:
-            base_filter = and_(base_filter, FoodLog.meal_type == meal_type)
+            filters.append(FoodLog.meal_type == meal_type)
 
         if date_from:
             day_start = datetime.combine(date_from, datetime.min.time()).replace(
-                tzinfo=timezone.utc
+                tzinfo=dt_timezone.utc
             )
-            base_filter = and_(base_filter, FoodLog.logged_at >= day_start)
+            filters.append(FoodLog.logged_at >= day_start)
 
         if date_to:
             day_end = datetime.combine(date_to, datetime.max.time()).replace(
-                tzinfo=timezone.utc
+                tzinfo=dt_timezone.utc
             )
-            base_filter = and_(base_filter, FoodLog.logged_at <= day_end)
+            filters.append(FoodLog.logged_at <= day_end)
 
-        # Count query
-        count_result = await self.session.execute(
-            select(func.count()).select_from(FoodLog).where(base_filter)
-        )
-        total = count_result.scalar_one()
+        query = FoodLog.find(*filters)
+        total = await query.count()
 
-        # Data query
         offset = (page - 1) * page_size
-        data_result = await self.session.execute(
-            select(FoodLog)
-            .where(base_filter)
-            .order_by(desc(FoodLog.logged_at))
-            .limit(page_size)
-            .offset(offset)
-        )
-        logs = list(data_result.scalars().all())
+        logs = await query.sort(-FoodLog.logged_at).skip(offset).limit(page_size).to_list()
 
         return logs, total
 
@@ -102,40 +80,22 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         user_id: UUID,
         target_date: date,
     ) -> dict:
-        """
-        Aggregate nutrition totals for a given day.
-        Returns dict with total calories, protein, carbs, fat, count.
-        """
-        day_start = datetime.combine(target_date, datetime.min.time()).replace(
-            tzinfo=timezone.utc
-        )
-        day_end = day_start + timedelta(days=1)
+        """Aggregate nutrition totals for a given day (Python-side aggregation)."""
+        logs = await self.get_logs_for_date(user_id, target_date)
 
-        result = await self.session.execute(
-            select(
-                func.coalesce(func.sum(FoodLog.calories), 0.0).label("total_calories"),
-                func.coalesce(func.sum(FoodLog.protein_g), 0.0).label("total_protein"),
-                func.coalesce(func.sum(FoodLog.carbs_g), 0.0).label("total_carbs"),
-                func.coalesce(func.sum(FoodLog.fat_g), 0.0).label("total_fat"),
-                func.coalesce(func.sum(FoodLog.fiber_g), 0.0).label("total_fiber"),
-                func.count(FoodLog.id).label("count"),
-            ).where(
-                and_(
-                    FoodLog.user_id == user_id,
-                    FoodLog.logged_at >= day_start,
-                    FoodLog.logged_at < day_end,
-                    FoodLog.is_deleted.is_(False),
-                )
-            )
-        )
-        row = result.one()
+        total_calories = sum(log.calories for log in logs)
+        total_protein = sum(log.protein_g or 0.0 for log in logs)
+        total_carbs = sum(log.carbs_g or 0.0 for log in logs)
+        total_fat = sum(log.fat_g or 0.0 for log in logs)
+        total_fiber = sum(log.fiber_g or 0.0 for log in logs)
+
         return {
-            "total_calories": float(row.total_calories),
-            "total_protein": float(row.total_protein),
-            "total_carbs": float(row.total_carbs),
-            "total_fat": float(row.total_fat),
-            "total_fiber": float(row.total_fiber),
-            "count": int(row.count),
+            "total_calories": round(total_calories, 2),
+            "total_protein": round(total_protein, 2),
+            "total_carbs": round(total_carbs, 2),
+            "total_fat": round(total_fat, 2),
+            "total_fiber": round(total_fiber, 2),
+            "count": len(logs),
         }
 
     async def create_food_log(
@@ -161,8 +121,8 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         nutrition_cache_id: UUID | None = None,
         memory_id: UUID | None = None,
     ) -> FoodLog:
-        """Create a new food log record."""
-        return await self.create(
+        """Create a new food log document."""
+        log = FoodLog(
             user_id=user_id,
             food_name=food_name,
             calories=calories,
@@ -179,10 +139,12 @@ class FoodLogRepository(BaseRepository[FoodLog]):
             confidence_score=confidence_score,
             confidence_level=confidence_level,
             assumptions=assumptions or [],
-            logged_at=logged_at or datetime.now(timezone.utc),
+            logged_at=logged_at or datetime.now(dt_timezone.utc),
             nutrition_cache_id=nutrition_cache_id,
             memory_id=memory_id,
         )
+        await log.insert()
+        return log
 
     async def mark_corrected(
         self,
@@ -198,10 +160,7 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         new_fiber_g: float | None = None,
         new_portion_description: str | None = None,
     ) -> FoodLog:
-        """
-        Apply user corrections to a food log.
-        Stores original values before overwriting.
-        """
+        """Apply user corrections to a food log."""
         if new_calories is not None and not log.is_corrected:
             log.original_calories = log.calories
         if new_portion_grams is not None and not log.is_corrected:
@@ -229,9 +188,9 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         log.is_corrected = True
         log.confidence_score = 1.0
         log.confidence_level = "confirmed"
+        log.updated_at = datetime.now(dt_timezone.utc)
 
-        await self.session.flush()
-        await self.session.refresh(log)
+        await log.save()
         return log
 
     async def get_recent_foods(
@@ -242,39 +201,25 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         days_back: int = 30,
     ) -> list[FoodLog]:
         """
-        Get recently logged foods for quick-add suggestions.
-        Deduplicates by food_name, returns the most recent per food.
+        Get recently logged foods, deduped by food_name (most recent per food).
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
+        cutoff = datetime.now(dt_timezone.utc) - timedelta(days=days_back)
 
-        # Subquery: latest logged_at per food_name for this user
-        latest_per_food = (
-            select(
-                FoodLog.food_name,
-                func.max(FoodLog.logged_at).label("latest"),
-            )
-            .where(
-                and_(
-                    FoodLog.user_id == user_id,
-                    FoodLog.logged_at >= cutoff,
-                    FoodLog.is_deleted.is_(False),
-                )
-            )
-            .group_by(FoodLog.food_name)
-            .subquery()
-        )
+        logs = await FoodLog.find(
+            FoodLog.user_id == user_id,
+            FoodLog.logged_at >= cutoff,
+            FoodLog.is_deleted == False,  # noqa: E712
+        ).sort(-FoodLog.logged_at).to_list()
 
-        result = await self.session.execute(
-            select(FoodLog)
-            .join(
-                latest_per_food,
-                and_(
-                    FoodLog.food_name == latest_per_food.c.food_name,
-                    FoodLog.logged_at == latest_per_food.c.latest,
-                    FoodLog.user_id == user_id,
-                ),
-            )
-            .order_by(desc(latest_per_food.c.latest))
-            .limit(limit)
-        )
-        return list(result.scalars().all())
+        # Deduplicate by food_name keeping the most recent (list is already sorted)
+        seen: set[str] = set()
+        deduped: list[FoodLog] = []
+        for log in logs:
+            key = log.food_name.lower()
+            if key not in seen:
+                seen.add(key)
+                deduped.append(log)
+            if len(deduped) >= limit:
+                break
+
+        return deduped

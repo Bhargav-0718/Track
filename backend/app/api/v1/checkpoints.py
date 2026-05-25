@@ -16,7 +16,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, UploadFile, status, File, Form
 
-from app.api.deps import CurrentUserID, DbSession
+from app.api.deps import CurrentUserID
 from app.schemas.checkpoint import (
     CheckpointCreate,
     CheckpointResponse,
@@ -41,7 +41,6 @@ router = APIRouter(prefix="/checkpoints", tags=["checkpoints"])
 async def create_checkpoint(
     data: CheckpointCreate,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> CheckpointResponse:
     """
     Create a new progress checkpoint.
@@ -54,7 +53,7 @@ async def create_checkpoint(
     **Typical usage**: Create a checkpoint at the start/end of a training phase,
     then upload 1-4 photos (front/back/side), then compare with an earlier checkpoint.
     """
-    service = CheckpointService(db)
+    service = CheckpointService()
     return await service.create_checkpoint(current_user_id, data)
 
 
@@ -65,7 +64,6 @@ async def create_checkpoint(
 )
 async def list_checkpoints(
     current_user_id: CurrentUserID,
-    db: DbSession,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     date_from: date | None = Query(default=None, description="Start date filter"),
@@ -76,7 +74,7 @@ async def list_checkpoints(
     List checkpoints ordered by date (newest first).
     Each summary includes photo count and primary photo URL.
     """
-    service = CheckpointService(db)
+    service = CheckpointService()
     checkpoints, total = await service.list_checkpoints(
         current_user_id,
         page=page,
@@ -101,10 +99,9 @@ async def list_checkpoints(
 async def get_checkpoint(
     checkpoint_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> CheckpointResponse:
     """Get full checkpoint details including all photos with resolved URLs."""
-    service = CheckpointService(db)
+    service = CheckpointService()
     return await service.get_checkpoint(checkpoint_id, current_user_id)
 
 
@@ -117,14 +114,13 @@ async def update_checkpoint(
     checkpoint_id: UUID,
     data: CheckpointUpdate,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> CheckpointResponse:
     """
     Update checkpoint metadata (weight, notes, tags, date).
     Photos are managed separately via the /photos sub-endpoints.
     All fields are optional — only provided fields are updated.
     """
-    service = CheckpointService(db)
+    service = CheckpointService()
     return await service.update_checkpoint(checkpoint_id, current_user_id, data)
 
 
@@ -136,13 +132,12 @@ async def update_checkpoint(
 async def delete_checkpoint(
     checkpoint_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> None:
     """
     Delete a checkpoint. All associated photos are removed from storage.
     This action is irreversible.
     """
-    service = CheckpointService(db)
+    service = CheckpointService()
     await service.delete_checkpoint(checkpoint_id, current_user_id)
 
 
@@ -155,7 +150,6 @@ async def delete_checkpoint(
 async def upload_photo(
     checkpoint_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
     file: UploadFile = File(..., description="Image file (JPEG, PNG, WebP, HEIC)"),
     label: str | None = Form(
         default=None,
@@ -175,7 +169,7 @@ async def upload_photo(
     The first uploaded photo becomes the primary thumbnail.
     """
     image_bytes = await file.read()
-    service = CheckpointService(db)
+    service = CheckpointService()
     return await service.upload_photo(
         checkpoint_id=checkpoint_id,
         user_id=current_user_id,
@@ -194,10 +188,9 @@ async def delete_photo(
     checkpoint_id: UUID,
     photo_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> None:
     """Delete a single photo from a checkpoint. Removes the file from storage."""
-    service = CheckpointService(db)
+    service = CheckpointService()
     await service.delete_photo(checkpoint_id, photo_id, current_user_id)
 
 
@@ -209,7 +202,6 @@ async def delete_photo(
 async def compare_checkpoints(
     request: CompareRequest,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> CompareResponse:
     """
     Compare two progress checkpoints using GPT-4o multimodal AI.
@@ -233,5 +225,5 @@ async def compare_checkpoints(
 
     **Note**: This endpoint calls GPT-4o vision and may take 10-20 seconds.
     """
-    service = CheckpointService(db)
+    service = CheckpointService()
     return await service.compare_checkpoints(current_user_id, request)

@@ -4,8 +4,6 @@ DailySummaryService — dashboard and Health Connect sync logic.
 from datetime import date, datetime, timezone
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.logging import get_logger
 from app.repositories.daily_summary_repository import DailySummaryRepository
 from app.repositories.food_log_repository import FoodLogRepository
@@ -25,12 +23,11 @@ logger = get_logger(__name__)
 
 
 class DailySummaryService:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
-        self.summary_repo = DailySummaryRepository(session)
-        self.food_repo = FoodLogRepository(session)
-        self.workout_repo = WorkoutLogRepository(session)
-        self.user_service = UserService(session)
+    def __init__(self) -> None:
+        self.summary_repo = DailySummaryRepository()
+        self.food_repo = FoodLogRepository()
+        self.workout_repo = WorkoutLogRepository()
+        self.user_service = UserService()
 
     async def get_dashboard(
         self,
@@ -39,7 +36,7 @@ class DailySummaryService:
     ) -> DashboardResponse:
         """
         Build the full dashboard for a given day.
-        Defaults to today in the user's timezone.
+        Defaults to today UTC if no date provided.
         """
         if target_date is None:
             target_date = datetime.now(timezone.utc).date()
@@ -60,7 +57,7 @@ class DailySummaryService:
             workout_totals = await self.workout_repo.get_daily_calories_burned(
                 user_id, target_date
             )
-            # Build a transient summary (don't persist for future dates)
+            # Build a transient summary (don't persist — it will be created on next log)
             from app.models.daily_summary import DailySummary
             from uuid import uuid4
             summary = DailySummary(
@@ -121,7 +118,6 @@ class DailySummaryService:
             active_minutes=data.active_minutes,
             activity_calories=data.activity_calories,
         )
-        await self.session.commit()
 
         logger.info(
             "health_connect_synced",

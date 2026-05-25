@@ -1,36 +1,21 @@
 """
-AnalyticsService — behavioral metrics computed from existing data.
+AnalyticsService — behavioral metrics computed from existing MongoDB documents.
 
-NO machine learning, NO separate analytics tables.
-All metrics are derived by querying food_logs, workout_logs, and daily_reports
-that already exist. This is intentionally simple — heuristics over complexity.
-
-Metrics computed:
-  - Logging streak (current + longest)
-  - Consistency scores (7d and 30d)
-  - Calorie adherence
-  - Protein adherence
-  - Workout consistency
-  - Meal pattern analysis (which meals get logged vs skipped)
-  - Estimation accuracy (correction rate from AI pipeline)
-  - Behavioral pattern sentences (human-readable, ready for AI prompt injection)
-
-Phase 4: These metrics feed both the analytics endpoint AND the daily report generator.
+All metrics are derived by querying food_logs, workout_logs, and daily_summaries.
+SQL aggregations replaced with Python-side aggregation over Beanie results.
 """
-from collections import defaultdict
-from datetime import date, timedelta
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
+from datetime import timezone as dt_timezone
 from uuid import UUID
-
-from sqlalchemy import and_, case, func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.models.correction_event import CorrectionEvent
 from app.models.daily_summary import DailySummary
 from app.models.food_log import FoodLog
 from app.models.progress_checkpoint import ProgressCheckpoint
-from app.models.workout_log import WorkoutLog
 from app.models.user import User
+from app.models.workout_log import WorkoutLog
 from app.schemas.analytics import (
     AnalyticsSummary,
     ConsistencyBreakdown,
@@ -44,25 +29,27 @@ from app.schemas.analytics import (
 logger = get_logger(__name__)
 
 
+def _day_start(d: date) -> datetime:
+    return datetime.combine(d, datetime.min.time()).replace(tzinfo=dt_timezone.utc)
+
+
+def _day_end(d: date) -> datetime:
+    return _day_start(d) + timedelta(days=1)
+
+
 class AnalyticsService:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+    def __init__(self) -> None:
+        pass
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
     async def get_summary(self, user_id: UUID) -> AnalyticsSummary:
-        """
-        Full behavioral analytics snapshot.
-        Queries run in parallel via separate DB calls (no join complexity).
-        """
         today = date.today()
 
-        # Fetch user for target calories/protein
         user = await self._get_user(user_id)
         target_cal = user.target_calories if user else None
         target_prot = user.target_protein_g if user else None
 
-        # Compute all metrics
         streak = await self._compute_streak(user_id, today)
         consistency_7d = await self._compute_consistency(
             user_id, today, period_days=7,
@@ -77,8 +64,6 @@ class AnalyticsService:
         pattern_insights = self._generate_pattern_insights(
             streak, consistency_7d, consistency_30d, meal_patterns, estimation_accuracy
         )
-
-        # Weight data from checkpoints
         checkpoints_count, latest_weight, weight_trend = await self._weight_trend(
             user_id, today, period_days=30
         )
@@ -97,15 +82,7 @@ class AnalyticsService:
             computed_at=today,
         )
 
-    async def get_trend(
-        self,
-        user_id: UUID,
-        period_days: int = 30,
-    ) -> TrendResponse:
-        """
-        Time-series data for trend charts.
-        Returns one data point per day for the last N days.
-        """
+    async def get_trend(self, user_id: UUID, period_days: int = 30) -> TrendResponse:
         today = date.today()
         start = today - timedelta(days=period_days - 1)
 
@@ -113,16 +90,13 @@ class AnalyticsService:
         target_cal = user.target_calories if user else None
         target_prot = user.target_protein_g if user else None
 
-        # Build a date → summary dict from daily_summaries table
-        stmt = select(DailySummary).where(
-            and_(
-                DailySummary.user_id == user_id,
-                DailySummary.date >= start,
-                DailySummary.date <= today,
-            )
-        )
-        result = await self.session.execute(stmt)
-        summaries = {s.date: s for s in result.scalars().all()}
+        summaries_list = await DailySummary.find(
+            DailySummary.user_id == user_id,
+        ).to_list()
+        summaries = {
+            s.date: s for s in summaries_list
+            if start <= s.date <= today
+        }
 
         data_points = []
         total_calories = 0.0
@@ -165,43 +139,21 @@ class AnalyticsService:
             average_protein_g=round(avg_prot, 1) if avg_prot else None,
         )
 
-    async def compute_report_context_metrics(
-        self,
-        user_id: UUID,
-        report_date: date,
-    ) -> dict:
-        """
-        Compute all metrics needed for daily report generation.
-        Returns a flat dict ready to populate ReportContext.
-        Used by ReportService before calling generate_daily_report().
-        """
+    async def compute_report_context_metrics(self, user_id: UUID, report_date: date) -> dict:
         user = await self._get_user(user_id)
         target_cal = user.target_calories if user else None
         target_prot = user.target_protein_g if user else None
 
-        # Today's nutrition from food_logs directly (more accurate than daily_summary)
         nutrition = await self._get_day_nutrition(user_id, report_date)
-
-        # Today's workouts
         workouts = await self._get_day_workouts(user_id, report_date)
-
-        # Streak
         streak = await self._compute_streak(user_id, report_date)
-
-        # 7-day consistency
         consistency_7d = await self._compute_consistency(
             user_id, report_date, period_days=7,
             target_calories=target_cal, target_protein=target_prot,
         )
-
-        # Correction rate (last 30 days)
         accuracy = await self._compute_estimation_accuracy(user_id)
-
-        # Generate pattern sentences (ready for AI prompt injection)
         meal_patterns = await self._compute_meal_patterns(user_id, report_date)
-        patterns = self._generate_pattern_sentences(
-            streak, consistency_7d, meal_patterns, report_date
-        )
+        patterns = self._generate_pattern_sentences(streak, consistency_7d, meal_patterns, report_date)
 
         return {
             "goal": user.goal if user else "maintain",
@@ -227,47 +179,32 @@ class AnalyticsService:
     # ── Internal Computations ──────────────────────────────────────────────────
 
     async def _get_user(self, user_id: UUID) -> User | None:
-        result = await self.session.execute(
-            select(User).where(User.id == user_id)
-        )
-        return result.scalar_one_or_none()
+        return await User.get(user_id)
 
     async def _compute_streak(self, user_id: UUID, reference_date: date) -> StreakInfo:
-        """
-        Compute current and longest logging streaks by scanning daily_summaries.
-        A day counts as "logged" if food_log_count > 0.
-        """
-        # Fetch last 365 days of daily_summaries
+        """Compute current and longest logging streaks."""
         start = reference_date - timedelta(days=364)
-        stmt = (
-            select(DailySummary.date, DailySummary.food_log_count)
-            .where(
-                and_(
-                    DailySummary.user_id == user_id,
-                    DailySummary.date >= start,
-                    DailySummary.date <= reference_date,
-                )
-            )
-            .order_by(DailySummary.date.desc())
-        )
-        result = await self.session.execute(stmt)
-        rows = result.all()
+
+        summaries = await DailySummary.find(
+            DailySummary.user_id == user_id,
+        ).to_list()
 
         logged_dates: set[date] = {
-            row.date for row in rows if (row.food_log_count or 0) > 0
+            s.date for s in summaries
+            if start <= s.date <= reference_date and (s.food_log_count or 0) > 0
         }
 
-        # Walk backwards from reference_date to find current streak
+        # Current streak: walk backwards from reference_date
         current_streak = 0
         d = reference_date
         while d in logged_dates:
             current_streak += 1
             d -= timedelta(days=1)
 
-        # Longest streak (full 365-day scan)
+        # Longest streak: scan full 365-day window
         longest = 0
         running = 0
-        for i in range(364, -1, -1):
+        for i in range(365):
             day = start + timedelta(days=i)
             if day in logged_dates:
                 running += 1
@@ -276,8 +213,10 @@ class AnalyticsService:
                 running = 0
 
         last_logged = max(logged_dates) if logged_dates else None
-        streak_start = (reference_date - timedelta(days=current_streak - 1)
-                        if current_streak > 0 else None)
+        streak_start = (
+            reference_date - timedelta(days=current_streak - 1)
+            if current_streak > 0 else None
+        )
         is_active = reference_date in logged_dates
 
         return StreakInfo(
@@ -296,56 +235,41 @@ class AnalyticsService:
         target_calories: float | None,
         target_protein: float | None,
     ) -> ConsistencyBreakdown:
-        """
-        Compute multi-dimensional consistency for a rolling window.
-        """
         start = reference_date - timedelta(days=period_days - 1)
         label = "7d" if period_days == 7 else "30d"
 
-        # Fetch daily_summaries for the period
-        stmt = select(DailySummary).where(
-            and_(
-                DailySummary.user_id == user_id,
-                DailySummary.date >= start,
-                DailySummary.date <= reference_date,
-            )
-        )
-        result = await self.session.execute(stmt)
-        summaries = list(result.scalars().all())
+        summaries_all = await DailySummary.find(
+            DailySummary.user_id == user_id,
+        ).to_list()
+        summaries = [s for s in summaries_all if start <= s.date <= reference_date]
 
         days_logged = sum(1 for s in summaries if (s.food_log_count or 0) > 0)
         logging_consistency = days_logged / period_days
 
-        # Calorie adherence: 1.0 if within ±15% of target
-        cal_scores = []
-        prot_scores = []
+        cal_scores: list[float] = []
+        prot_scores: list[float] = []
         workout_days = 0
 
         for s in summaries:
             if (s.food_log_count or 0) == 0:
-                continue  # Don't penalize unlogged days in adherence (already in logging)
+                continue
 
             if target_calories and target_calories > 0 and s.total_calories_in:
                 ratio = s.total_calories_in / target_calories
-                # Score: 1.0 at ratio=1.0, decays toward 0 as ratio deviates
-                score = max(0.0, 1.0 - abs(1.0 - ratio) * 2)
-                cal_scores.append(score)
+                cal_scores.append(max(0.0, 1.0 - abs(1.0 - ratio) * 2))
 
             if target_protein and target_protein > 0 and s.total_protein_g:
                 ratio = s.total_protein_g / target_protein
-                score = max(0.0, 1.0 - abs(1.0 - ratio) * 2)
-                prot_scores.append(score)
+                prot_scores.append(max(0.0, 1.0 - abs(1.0 - ratio) * 2))
 
             if (s.workout_count or 0) > 0:
                 workout_days += 1
 
         cal_adherence = sum(cal_scores) / len(cal_scores) if cal_scores else 0.5
         prot_adherence = sum(prot_scores) / len(prot_scores) if prot_scores else 0.5
-        # Workout consistency: assume 4 workouts/week target as baseline
         target_workouts = (period_days / 7) * 4
         workout_consistency = min(workout_days / max(target_workouts, 1), 1.0)
 
-        # Weighted composite: logging is most important
         overall = (
             logging_consistency * 0.40
             + cal_adherence * 0.25
@@ -372,117 +296,67 @@ class AnalyticsService:
         reference_date: date,
         period_days: int = 30,
     ) -> list[MealAdherencePattern]:
-        """
-        Analyse which meals are logged most/least consistently.
-        """
         start = reference_date - timedelta(days=period_days - 1)
+        start_dt = _day_start(start)
+        end_dt = _day_end(reference_date)
 
-        # Count logs per meal type
-        stmt = (
-            select(
-                FoodLog.meal_type,
-                func.count(FoodLog.id).label("log_count"),
-                func.avg(FoodLog.calories).label("avg_cal"),
-            )
-            .where(
-                and_(
-                    FoodLog.user_id == user_id,
-                    FoodLog.is_deleted.is_(False),
-                    func.date(FoodLog.logged_at) >= start,
-                )
-            )
-            .group_by(FoodLog.meal_type)
-        )
-        result = await self.session.execute(stmt)
-        rows = result.all()
+        logs = await FoodLog.find(
+            FoodLog.user_id == user_id,
+            FoodLog.is_deleted == False,  # noqa: E712
+            FoodLog.logged_at >= start_dt,
+            FoodLog.logged_at < end_dt,
+        ).to_list()
 
-        # Most common foods per meal type
-        food_stmt = (
-            select(FoodLog.meal_type, FoodLog.food_name, func.count(FoodLog.id).label("cnt"))
-            .where(
-                and_(
-                    FoodLog.user_id == user_id,
-                    FoodLog.is_deleted.is_(False),
-                )
-            )
-            .group_by(FoodLog.meal_type, FoodLog.food_name)
-            .order_by(FoodLog.meal_type, func.count(FoodLog.id).desc())
-        )
-        food_result = await self.session.execute(food_stmt)
-        food_rows = food_result.all()
+        # Group by meal_type
+        meal_logs: dict[str, list[FoodLog]] = defaultdict(list)
+        for log in logs:
+            meal_logs[log.meal_type].append(log)
 
-        # Group top foods per meal type
-        top_foods: dict[str, list[str]] = defaultdict(list)
-        counts_per_meal: dict[str, int] = defaultdict(int)
-        for row in food_rows:
-            counts_per_meal[row.meal_type] += 1
-            if len(top_foods[row.meal_type]) < 3:
-                top_foods[row.meal_type].append(row.food_name)
+        # Top foods per meal type
+        food_counts: dict[str, Counter] = defaultdict(Counter)
+        for log in logs:
+            food_counts[log.meal_type][log.food_name] += 1
 
         patterns = []
-        for row in rows:
-            meal = row.meal_type
-            freq = min(row.log_count / period_days, 1.0)
+        for meal_type, meal_log_list in meal_logs.items():
+            count = len(meal_log_list)
+            avg_cal = sum(l.calories for l in meal_log_list) / count if count else 0.0
+            freq = min(count / period_days, 1.0)
+            top_foods = [f for f, _ in food_counts[meal_type].most_common(3)]
             patterns.append(MealAdherencePattern(
-                meal_type=meal,
+                meal_type=meal_type,
                 log_frequency_pct=round(freq * 100, 1),
-                avg_calories=round(row.avg_cal or 0, 1),
-                most_common_foods=top_foods.get(meal, []),
+                avg_calories=round(avg_cal, 1),
+                most_common_foods=top_foods,
             ))
 
         return sorted(patterns, key=lambda p: p.log_frequency_pct, reverse=True)
 
     async def _compute_estimation_accuracy(self, user_id: UUID) -> EstimationAccuracyStats:
-        """
-        How often did the user correct AI estimates?
-        High correction rate → AI needs more personal data (more logs = better).
-        """
         period_start = date.today() - timedelta(days=30)
+        period_start_dt = _day_start(period_start)
 
-        # Total logs in last 30 days
-        total_stmt = select(func.count(FoodLog.id)).where(
-            and_(
-                FoodLog.user_id == user_id,
-                FoodLog.is_deleted.is_(False),
-                func.date(FoodLog.logged_at) >= period_start,
-            )
-        )
-        total_logs = (await self.session.execute(total_stmt)).scalar_one() or 0
+        logs = await FoodLog.find(
+            FoodLog.user_id == user_id,
+            FoodLog.is_deleted == False,  # noqa: E712
+            FoodLog.logged_at >= period_start_dt,
+        ).to_list()
 
-        # Corrected logs
-        corrected_stmt = select(func.count(FoodLog.id)).where(
-            and_(
-                FoodLog.user_id == user_id,
-                FoodLog.is_deleted.is_(False),
-                FoodLog.is_corrected.is_(True),
-                func.date(FoodLog.logged_at) >= period_start,
-            )
-        )
-        corrected_logs = (await self.session.execute(corrected_stmt)).scalar_one() or 0
+        total_logs = len(logs)
+        corrected_logs = sum(1 for l in logs if l.is_corrected)
 
         # Average calorie delta from correction events
-        delta_stmt = select(func.avg(func.abs(CorrectionEvent.delta))).where(
-            and_(
-                CorrectionEvent.user_id == user_id,
-                CorrectionEvent.correction_type == "calories",
-            )
-        )
-        avg_delta = (await self.session.execute(delta_stmt)).scalar_one() or 0.0
+        corrections = await CorrectionEvent.find(
+            CorrectionEvent.user_id == user_id,
+            CorrectionEvent.correction_type == "calories",
+        ).to_list()
+        deltas = [abs(c.delta) for c in corrections if c.delta is not None]
+        avg_delta = sum(deltas) / len(deltas) if deltas else 0.0
 
         # Source breakdown
-        source_stmt = (
-            select(FoodLog.estimation_source, func.count(FoodLog.id).label("cnt"))
-            .where(
-                and_(
-                    FoodLog.user_id == user_id,
-                    FoodLog.is_deleted.is_(False),
-                    func.date(FoodLog.logged_at) >= period_start,
-                )
-            )
-            .group_by(FoodLog.estimation_source)
-        )
-        source_result = await self.session.execute(source_stmt)
-        source_breakdown = {row.estimation_source: row.cnt for row in source_result.all()}
+        source_breakdown: dict[str, int] = defaultdict(int)
+        for log in logs:
+            source_breakdown[log.estimation_source] += 1
 
         correction_rate = (corrected_logs / total_logs * 100) if total_logs > 0 else 0.0
 
@@ -490,70 +364,39 @@ class AnalyticsService:
             total_logs=total_logs,
             corrected_logs=corrected_logs,
             correction_rate_pct=round(correction_rate, 1),
-            avg_calorie_delta=round(float(avg_delta), 1),
-            source_breakdown=source_breakdown,
+            avg_calorie_delta=round(avg_delta, 1),
+            source_breakdown=dict(source_breakdown),
         )
 
     async def _get_day_nutrition(self, user_id: UUID, target_date: date) -> dict:
-        """Get aggregated nutrition for a specific date."""
-        stmt = select(
-            func.coalesce(func.sum(FoodLog.calories), 0.0).label("calories"),
-            func.coalesce(func.sum(FoodLog.protein_g), 0.0).label("protein"),
-            func.coalesce(func.sum(FoodLog.carbs_g), 0.0).label("carbs"),
-            func.coalesce(func.sum(FoodLog.fat_g), 0.0).label("fat"),
-            func.count(FoodLog.id).label("meal_count"),
-        ).where(
-            and_(
-                FoodLog.user_id == user_id,
-                FoodLog.is_deleted.is_(False),
-                func.date(FoodLog.logged_at) == target_date,
-            )
-        )
-        result = await self.session.execute(stmt)
-        row = result.one()
+        logs = await FoodLog.find(
+            FoodLog.user_id == user_id,
+            FoodLog.is_deleted == False,  # noqa: E712
+            FoodLog.logged_at >= _day_start(target_date),
+            FoodLog.logged_at < _day_end(target_date),
+        ).to_list()
+
         return {
-            "calories": float(row.calories),
-            "protein": float(row.protein),
-            "carbs": float(row.carbs),
-            "fat": float(row.fat),
-            "meal_count": row.meal_count,
+            "calories": sum(l.calories for l in logs),
+            "protein": sum(l.protein_g or 0.0 for l in logs),
+            "carbs": sum(l.carbs_g or 0.0 for l in logs),
+            "fat": sum(l.fat_g or 0.0 for l in logs),
+            "meal_count": len(logs),
         }
 
     async def _get_day_workouts(self, user_id: UUID, target_date: date) -> dict:
-        """Get workout summary for a specific date."""
-        stmt = select(
-            func.count(WorkoutLog.id).label("count"),
-            func.coalesce(func.sum(WorkoutLog.calories_burned), 0.0).label("calories_burned"),
-            func.coalesce(func.sum(WorkoutLog.duration_minutes), 0.0).label("duration"),
-        ).where(
-            and_(
-                WorkoutLog.user_id == user_id,
-                WorkoutLog.is_deleted.is_(False),
-                func.date(WorkoutLog.logged_at) == target_date,
-            )
-        )
-        result = await self.session.execute(stmt)
-        row = result.one()
+        logs = await WorkoutLog.find(
+            WorkoutLog.user_id == user_id,
+            WorkoutLog.is_deleted == False,  # noqa: E712
+            WorkoutLog.logged_at >= _day_start(target_date),
+            WorkoutLog.logged_at < _day_end(target_date),
+        ).to_list()
 
-        # Get workout types for the day
-        types_stmt = (
-            select(WorkoutLog.workout_type)
-            .where(
-                and_(
-                    WorkoutLog.user_id == user_id,
-                    WorkoutLog.is_deleted.is_(False),
-                    func.date(WorkoutLog.logged_at) == target_date,
-                )
-            )
-            .distinct()
-        )
-        types_result = await self.session.execute(types_stmt)
-        types = [r.workout_type for r in types_result.all()]
-
+        types = list({l.workout_type for l in logs})
         return {
-            "count": row.count,
-            "calories_burned": float(row.calories_burned),
-            "duration_minutes": float(row.duration),
+            "count": len(logs),
+            "calories_burned": sum(l.calories_burned or 0.0 for l in logs),
+            "duration_minutes": sum(l.duration_minutes for l in logs),
             "types": types,
         }
 
@@ -563,48 +406,27 @@ class AnalyticsService:
         reference_date: date,
         period_days: int,
     ) -> tuple[int, float | None, float | None]:
-        """
-        Return (checkpoint_count, latest_weight_kg, weight_change_kg) from
-        ProgressCheckpoint records within the period.
-        """
         start = reference_date - timedelta(days=period_days)
-        stmt = (
-            select(ProgressCheckpoint.checkpoint_date, ProgressCheckpoint.weight_kg)
-            .where(
-                and_(
-                    ProgressCheckpoint.user_id == user_id,
-                    ProgressCheckpoint.is_deleted.is_(False),
-                    ProgressCheckpoint.checkpoint_date >= start,
-                    ProgressCheckpoint.checkpoint_date <= reference_date,
-                    ProgressCheckpoint.weight_kg.is_not(None),
-                )
-            )
-            .order_by(ProgressCheckpoint.checkpoint_date)
-        )
-        result = await self.session.execute(stmt)
-        rows = result.all()
 
-        if not rows:
-            total_count_stmt = select(func.count(ProgressCheckpoint.id)).where(
-                and_(
-                    ProgressCheckpoint.user_id == user_id,
-                    ProgressCheckpoint.is_deleted.is_(False),
-                )
-            )
-            total = (await self.session.execute(total_count_stmt)).scalar_one()
+        all_checkpoints = await ProgressCheckpoint.find(
+            ProgressCheckpoint.user_id == user_id,
+            ProgressCheckpoint.is_deleted == False,  # noqa: E712
+        ).to_list()
+
+        total = len(all_checkpoints)
+
+        in_range = [
+            c for c in all_checkpoints
+            if start <= c.checkpoint_date <= reference_date and c.weight_kg is not None
+        ]
+        in_range.sort(key=lambda c: c.checkpoint_date)
+
+        if not in_range:
             return total, None, None
 
-        earliest_weight = rows[0].weight_kg
-        latest_weight = rows[-1].weight_kg
+        earliest_weight = in_range[0].weight_kg
+        latest_weight = in_range[-1].weight_kg
         weight_change = (latest_weight - earliest_weight) if earliest_weight else None
-
-        total_count_stmt = select(func.count(ProgressCheckpoint.id)).where(
-            and_(
-                ProgressCheckpoint.user_id == user_id,
-                ProgressCheckpoint.is_deleted.is_(False),
-            )
-        )
-        total = (await self.session.execute(total_count_stmt)).scalar_one()
 
         return total, latest_weight, weight_change
 
@@ -618,13 +440,8 @@ class AnalyticsService:
         meal_patterns: list[MealAdherencePattern],
         accuracy: EstimationAccuracyStats,
     ) -> list[str]:
-        """
-        Generate human-readable insight sentences from computed metrics.
-        These appear in the analytics endpoint.
-        """
         insights = []
 
-        # Streak observations
         if streak.current_streak_days >= 7:
             insights.append(
                 f"You're on a {streak.current_streak_days}-day logging streak — "
@@ -641,7 +458,6 @@ class AnalyticsService:
                 f"You're at {streak.current_streak_days} now — you can beat it."
             )
 
-        # Consistency deltas
         if consistency_7d.logging_consistency > consistency_30d.logging_consistency + 0.15:
             insights.append(
                 "Your logging consistency has improved noticeably this week compared to last month."
@@ -652,7 +468,6 @@ class AnalyticsService:
                 "Getting back on track usually takes just one logged meal."
             )
 
-        # Calorie adherence
         if consistency_7d.calorie_adherence >= 0.85:
             insights.append("You've been hitting your calorie target consistently this week.")
         elif consistency_7d.calorie_adherence < 0.50:
@@ -661,14 +476,12 @@ class AnalyticsService:
                 "Logging every meal helps build a more accurate picture."
             )
 
-        # Protein adherence
         if consistency_7d.protein_adherence < 0.70 and consistency_7d.logging_consistency > 0.7:
             insights.append(
                 "You log consistently but protein tends to fall short of your target. "
                 "Adding a protein source to one meal can make a big difference."
             )
 
-        # Meal patterns — find the least-logged meal
         if meal_patterns:
             worst = min(meal_patterns, key=lambda p: p.log_frequency_pct)
             if worst.log_frequency_pct < 40:
@@ -678,7 +491,6 @@ class AnalyticsService:
                     f"it's your most commonly missed meal."
                 )
 
-        # Estimation accuracy
         if accuracy.correction_rate_pct > 30:
             insights.append(
                 f"You've corrected {accuracy.correction_rate_pct:.0f}% of AI estimates recently. "
@@ -690,7 +502,7 @@ class AnalyticsService:
                 "your food memory is well-trained."
             )
 
-        return insights[:6]  # Cap at 6 insights for readability
+        return insights[:6]
 
     def _generate_pattern_sentences(
         self,
@@ -699,16 +511,10 @@ class AnalyticsService:
         meal_patterns: list[MealAdherencePattern],
         report_date: date,
     ) -> list[str]:
-        """
-        Shorter pattern sentences for injection into AI report prompts.
-        These become the "DETECTED BEHAVIORAL PATTERNS" in the prompt.
-        """
         patterns = []
 
         if streak.current_streak_days >= 3:
-            patterns.append(
-                f"Current logging streak: {streak.current_streak_days} consecutive days."
-            )
+            patterns.append(f"Current logging streak: {streak.current_streak_days} consecutive days.")
 
         if consistency_7d.logging_consistency >= 0.86:
             patterns.append("Logged food on 6+ of the last 7 days — highly consistent.")
@@ -730,8 +536,7 @@ class AnalyticsService:
             worst = min(meal_patterns, key=lambda p: p.log_frequency_pct)
             if worst.log_frequency_pct < 40:
                 patterns.append(
-                    f"Tends to skip logging {worst.meal_type.replace('_', ' ')} "
-                    f"most days."
+                    f"Tends to skip logging {worst.meal_type.replace('_', ' ')} most days."
                 )
             best = max(meal_patterns, key=lambda p: p.log_frequency_pct)
             if best.log_frequency_pct >= 80:
@@ -740,4 +545,4 @@ class AnalyticsService:
                     f"({best.log_frequency_pct:.0f}% of days)."
                 )
 
-        return patterns[:5]  # Keep prompts concise
+        return patterns[:5]

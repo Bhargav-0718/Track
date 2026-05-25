@@ -7,6 +7,7 @@ Routes:
   GET    /workout-logs/{id}       → Get specific workout
   PUT    /workout-logs/{id}       → Update workout
   DELETE /workout-logs/{id}       → Soft delete workout
+  GET    /dashboard               → Daily dashboard
   POST   /health-connect/sync     → Sync activity data from Android Health Connect
 """
 from datetime import date
@@ -14,7 +15,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUser, CurrentUserID, DbSession
+from app.api.deps import CurrentUser, CurrentUserID
 from app.schemas.common import PaginatedResponse
 from app.schemas.daily_summary import (
     DashboardResponse,
@@ -42,7 +43,6 @@ router = APIRouter(tags=["workout-logs"])
 async def create_workout_log(
     data: WorkoutLogCreate,
     current_user: CurrentUser,
-    db: DbSession,
 ) -> WorkoutLogResponse:
     """
     Log a workout.
@@ -54,7 +54,7 @@ async def create_workout_log(
     For Health Connect synced workouts, provide `health_connect_id` for
     automatic deduplication.
     """
-    service = WorkoutService(db)
+    service = WorkoutService()
     return await service.create_log(
         current_user.id,
         data,
@@ -69,7 +69,6 @@ async def create_workout_log(
 )
 async def list_workout_logs(
     current_user_id: CurrentUserID,
-    db: DbSession,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     workout_type: str | None = Query(default=None),
@@ -77,7 +76,7 @@ async def list_workout_logs(
     date_to: date | None = Query(default=None),
 ) -> PaginatedResponse[WorkoutLogSummary]:
     """List workout logs with pagination and optional filters."""
-    service = WorkoutService(db)
+    service = WorkoutService()
     logs, total = await service.list_logs(
         current_user_id,
         page=page,
@@ -102,10 +101,9 @@ async def list_workout_logs(
 async def get_workout_log(
     log_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> WorkoutLogResponse:
     """Get full details of a specific workout log."""
-    service = WorkoutService(db)
+    service = WorkoutService()
     return await service.get_log(log_id, current_user_id)
 
 
@@ -118,7 +116,6 @@ async def update_workout_log(
     log_id: UUID,
     data: WorkoutLogUpdate,
     current_user: CurrentUser,
-    db: DbSession,
 ) -> WorkoutLogResponse:
     """
     Update a workout log.
@@ -127,7 +124,7 @@ async def update_workout_log(
     the original calories_source was 'formula', calories are automatically
     re-estimated. Provide explicit calories_burned to override.
     """
-    service = WorkoutService(db)
+    service = WorkoutService()
     return await service.update_log(
         log_id,
         current_user.id,
@@ -144,14 +141,13 @@ async def update_workout_log(
 async def delete_workout_log(
     log_id: UUID,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> None:
     """Soft delete a workout log and refresh daily summary."""
-    service = WorkoutService(db)
+    service = WorkoutService()
     await service.delete_log(log_id, current_user_id)
 
 
-# ── Dashboard ─────────────���───────────────────────────���────────────────────────
+# ── Dashboard ──────────────────────────────────────────────────────────────────
 
 @router.get(
     "/dashboard",
@@ -161,7 +157,6 @@ async def delete_workout_log(
 )
 async def get_dashboard(
     current_user_id: CurrentUserID,
-    db: DbSession,
     date: date | None = Query(default=None, description="Date (YYYY-MM-DD). Defaults to today."),
 ) -> DashboardResponse:
     """
@@ -170,11 +165,11 @@ async def get_dashboard(
     Returns: daily summary + food logs + workout logs + progress toward targets.
     This is the primary endpoint for the Flutter home screen.
     """
-    service = DailySummaryService(db)
+    service = DailySummaryService()
     return await service.get_dashboard(current_user_id, date)
 
 
-# ── Health Connect Sync ───────────────��────────────────────────────��────────────
+# ── Health Connect Sync ────────────────────────────────────────────────────────
 
 @router.post(
     "/health-connect/sync",
@@ -185,7 +180,6 @@ async def get_dashboard(
 async def sync_health_connect(
     data: HealthConnectSyncRequest,
     current_user_id: CurrentUserID,
-    db: DbSession,
 ) -> HealthConnectSyncResponse:
     """
     Receive activity data from Android Health Connect.
@@ -197,5 +191,5 @@ async def sync_health_connect(
 
     Data is upserted into the daily summary for the specified date.
     """
-    service = DailySummaryService(db)
+    service = DailySummaryService()
     return await service.sync_health_connect(current_user_id, data)
