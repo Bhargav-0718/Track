@@ -18,7 +18,6 @@ dependencies = [
     # --- Database (MongoDB) ---
     "motor>=3.6.0",
     "beanie>=2.0.0",
-    "pymongo>=4.0,<4.8",
 
     # --- Validation ---
     "pydantic>=2.10.0",
