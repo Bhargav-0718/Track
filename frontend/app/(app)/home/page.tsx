@@ -118,7 +118,7 @@ function CalorieBalanceSheet({
     mealTotals.set(log.meal_type, (mealTotals.get(log.meal_type) ?? 0) + log.calories);
   }
 
-  const totalIn = [...mealTotals.values()].reduce((s, v) => s + v, 0);
+  const totalIn = Array.from(mealTotals.values()).reduce((s, v) => s + v, 0);
   const workoutCal = workouts
     .filter((w) => !w.is_rest_day)
     .reduce((s, w) => s + (w.calories_burned ?? 0), 0);
