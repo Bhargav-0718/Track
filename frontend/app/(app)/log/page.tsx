@@ -834,6 +834,19 @@ function WorkoutTab({ onLogged, recentWorkouts, mutateRecent }: {
   mutateRecent: () => void;
 }) {
   const [activeSection, setActiveSection] = useState<WorkoutSection>("app_workout");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function handleDeleteWorkout(id: string) {
+    setDeletingId(id);
+    try {
+      await workoutApi.deleteLog(id);
+      mutateRecent();
+    } catch {
+      // non-fatal
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -910,6 +923,15 @@ function WorkoutTab({ onLogged, recentWorkouts, mutateRecent }: {
                       {Math.round(log.calories_burned)} kcal
                     </p>
                   )}
+                  <button
+                    onClick={() => handleDeleteWorkout(log.id)}
+                    disabled={deletingId === log.id}
+                    className="ml-1 p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40 shrink-0"
+                  >
+                    {deletingId === log.id
+                      ? <div className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
                 </motion.div>
               );
             })}
