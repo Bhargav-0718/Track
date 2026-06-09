@@ -19,7 +19,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// have to type the flag manually.
 const String _baseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://10.0.2.2:8000', // emulator default
+  defaultValue: 'http://10.0.2.2:8080', // emulator default
 );
 
 const String _tokenKey = 'track_token';

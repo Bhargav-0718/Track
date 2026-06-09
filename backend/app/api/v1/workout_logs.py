@@ -65,14 +65,14 @@ async def create_workout_log(
 
 @router.post(
     "/workout-logs/log/",
-    response_model=WorkoutLogResponse,
+    response_model=list[WorkoutLogResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Log a workout (3-section UI)",
 )
 async def create_sectioned_workout_log(
     data: SectionedWorkoutCreate,
     current_user: CurrentUser,
-) -> WorkoutLogResponse:
+) -> list[WorkoutLogResponse]:
     """
     Log a workout using the 3-section format.
 

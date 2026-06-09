@@ -41,7 +41,8 @@ class WorkoutApi {
   }
 
   /// Log a workout using the 3-section UI format (App / Cardio / Strength / Rest).
-  static Future<WorkoutLog> logSectioned({
+  /// Returns one entry per activity/exercise (mirrors the food log list pattern).
+  static Future<List<WorkoutLog>> logSectioned({
     required String section,
     bool isRestDay = false,
     double? caloriesFromApp,
@@ -49,7 +50,7 @@ class WorkoutApi {
     List<Map<String, dynamic>>? strengthExercises,
     String? notes,
   }) async {
-    final response = await dio.post<Map<String, dynamic>>(
+    final response = await dio.post<List<dynamic>>(
       '/api/v1/workout-logs/log/',
       data: {
         'section': section,
@@ -60,7 +61,9 @@ class WorkoutApi {
         if (notes != null) 'notes': notes,
       },
     );
-    return WorkoutLog.fromJson(response.data!);
+    return (response.data ?? [])
+        .map((e) => WorkoutLog.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   static Future<void> delete(String id) async {

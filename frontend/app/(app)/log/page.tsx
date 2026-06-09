@@ -473,12 +473,13 @@ function AppWorkoutSection({
     setLoading(true);
     setSuccess(null);
     try {
-      const w = await workoutApi.createSectionedLog({
+      const logs = await workoutApi.createSectionedLog({
         section: isRest ? "rest_day" : "app_workout",
         is_rest_day: isRest,
         calories_from_app: isRest ? undefined : parseFloat(calories) || 0,
       });
-      setSuccess(isRest ? "Rest day logged!" : `${Math.round(w.calories_burned ?? 0)} kcal logged!`);
+      const totalKcal = logs.reduce((s, l) => s + (l.calories_burned ?? 0), 0);
+      setSuccess(isRest ? "Rest day logged!" : `${Math.round(totalKcal)} kcal logged!`);
       setCalories("");
       setIsRest(false);
       onLogged();
@@ -571,9 +572,9 @@ function CardioSection({ onLogged }: { onLogged: () => void }) {
         duration_minutes: parseFloat(r.duration) || 0,
         ...(r.calories.trim() ? { calories_burned: parseFloat(r.calories) } : {}),
       }));
-      const w = await workoutApi.createSectionedLog({ section: "cardio", cardio_activities: activities });
-      const kcal = w.calories_burned != null ? ` · ${Math.round(w.calories_burned)} kcal` : " · estimating…";
-      setSuccess(`Cardio logged${kcal}`);
+      const logs = await workoutApi.createSectionedLog({ section: "cardio", cardio_activities: activities });
+      const totalKcal = logs.reduce((s, l) => s + (l.calories_burned ?? 0), 0);
+      setSuccess(`${logs.length} activit${logs.length !== 1 ? "ies" : "y"} logged · ${Math.round(totalKcal)} kcal`);
       setRows([newCardioRow(String(nextId))]);
       setNextId((n) => n + 1);
       onLogged();
@@ -736,9 +737,9 @@ function StrengthSection({ onLogged, recentWorkouts }: { onLogged: () => void; r
         reps: parseInt(r.reps) || 1,
         weight_kg: parseFloat(r.weight) || 0,
       }));
-      const w = await workoutApi.createSectionedLog({ section: "strength", strength_exercises: exercises });
-      const kcal = w.calories_burned != null ? ` · ${Math.round(w.calories_burned)} kcal` : "";
-      setSuccess(`${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} logged${kcal}`);
+      const logs = await workoutApi.createSectionedLog({ section: "strength", strength_exercises: exercises });
+      const totalKcal = logs.reduce((s, l) => s + (l.calories_burned ?? 0), 0);
+      setSuccess(`${logs.length} exercise${logs.length !== 1 ? "s" : ""} logged · ${Math.round(totalKcal)} kcal`);
       setRows([newStrRow(String(nextId))]);
       setNextId((n) => n + 1);
       onLogged();
@@ -901,7 +902,7 @@ function WorkoutTab({ onLogged, recentWorkouts, mutateRecent }: {
                             : log.workout_section === "strength" ? "Strength"
                             : "App"} · ${log.duration_minutes > 0 ? `${log.duration_minutes} min` : ""}`
                       }
-                      {log.exercises.length > 0 && !log.is_rest_day && ` · ${log.exercises.length} item${log.exercises.length !== 1 ? "s" : ""}`}
+                      {(log.exercises?.length ?? 0) > 0 && !log.is_rest_day && ` · ${log.exercises!.length} item${log.exercises!.length !== 1 ? "s" : ""}`}
                     </p>
                   </div>
                   {log.calories_burned != null && log.calories_burned > 0 && (

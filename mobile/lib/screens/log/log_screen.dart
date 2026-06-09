@@ -865,15 +865,16 @@ class _AppWorkoutFormState extends ConsumerState<_AppWorkoutForm> {
     if (!_isRest && _calCtrl.text.trim().isEmpty) return;
     setState(() { _loading = true; _success = null; });
     try {
-      final w = await WorkoutApi.logSectioned(
+      final logs = await WorkoutApi.logSectioned(
         section: 'app_workout',
         isRestDay: _isRest,
         caloriesFromApp: _isRest ? null : double.tryParse(_calCtrl.text),
       );
+      final totalKcal = logs.fold<double>(0, (s, l) => s + (l.caloriesBurned ?? 0));
       setState(() {
         _success = _isRest
             ? 'Rest day logged!'
-            : '${(w.caloriesBurned ?? 0).toInt()} kcal logged!';
+            : '${totalKcal.toInt()} kcal logged!';
         _calCtrl.clear();
         _isRest = false;
       });
@@ -1017,13 +1018,11 @@ class _CardioFormState extends ConsumerState<_CardioForm> {
         if (r.caloriesCtrl.text.trim().isNotEmpty)
           'calories_burned': double.tryParse(r.caloriesCtrl.text),
       }).toList();
-      final w = await WorkoutApi.logSectioned(
+      final logs = await WorkoutApi.logSectioned(
           section: 'cardio', cardioActivities: activities);
-      final kcal = w.caloriesBurned != null
-          ? ' · ${w.caloriesBurned!.toInt()} kcal'
-          : ' · estimating…';
+      final totalKcal = logs.fold<double>(0, (s, l) => s + (l.caloriesBurned ?? 0));
       setState(() {
-        _success = 'Cardio logged$kcal';
+        _success = '${logs.length} activit${logs.length != 1 ? "ies" : "y"} logged · ${totalKcal.toInt()} kcal';
         for (final r in _rows) { r.dispose(); }
         _rows
           ..clear()
@@ -1260,14 +1259,12 @@ class _StrengthFormState extends ConsumerState<_StrengthForm> {
         'reps': int.tryParse(r.repsCtrl.text) ?? 1,
         'weight_kg': double.tryParse(r.weightCtrl.text) ?? 0.0,
       }).toList();
-      final w = await WorkoutApi.logSectioned(
+      final logs = await WorkoutApi.logSectioned(
           section: 'strength', strengthExercises: exercises);
-      final kcal = w.caloriesBurned != null
-          ? ' · ${w.caloriesBurned!.toInt()} kcal'
-          : '';
+      final totalKcal = logs.fold<double>(0, (s, l) => s + (l.caloriesBurned ?? 0));
       setState(() {
         _success =
-            '${valid.length} exercise${valid.length > 1 ? 's' : ''} logged$kcal';
+            '${logs.length} exercise${logs.length != 1 ? 's' : ''} logged · ${totalKcal.toInt()} kcal';
         for (final r in _rows) { r.dispose(); }
         _rows
           ..clear()

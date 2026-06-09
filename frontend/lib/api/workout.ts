@@ -8,7 +8,7 @@ export const workoutApi = {
     api.post<WorkoutLog>(PREFIX + "/", data),
 
   createSectionedLog: (data: SectionedWorkoutCreate) =>
-    api.post<WorkoutLog>(PREFIX + "/log/", data),
+    api.post<WorkoutLog[]>(PREFIX + "/log/", data),
 
   listLogs: (params?: {
     page?: number;

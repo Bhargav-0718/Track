@@ -14,6 +14,7 @@ import { foodApi } from "@/lib/api/food";
 import { analyticsApi } from "@/lib/api/analytics";
 import { reportsApi } from "@/lib/api/reports";
 import { activityApi, calculateBmr, stepsToCalories } from "@/lib/api/activity";
+import { workoutApi } from "@/lib/api/workout";
 import { useAuthStore } from "@/lib/store/auth";
 import {
   formatCalories,
@@ -150,11 +151,16 @@ export default function HomePage() {
 
   const { data: stepHistory } = useSWR("step-history", () => activityApi.getHistory(7));
 
+  const { data: todayWorkouts } = useSWR(
+    ["workouts-today", todayISO()],
+    () => workoutApi.listLogs({ date_from: todayISO(), date_to: todayISO(), page_size: 50 })
+  );
+
   const targetCal = user?.target_calories ?? 2000;
   const actualCal = daily?.total_calories ?? 0;
   const calPct = Math.min((actualCal / targetCal) * 100, 100);
 
-  // Calories burned
+  // Calories burned = BMR + steps + workouts logged today
   const weightKg = user?.weight_kg ?? 70;
   const heightCm = user?.height_cm ?? 170;
   const age = user?.age ?? 25;
@@ -162,7 +168,8 @@ export default function HomePage() {
   const bmr = calculateBmr(weightKg, heightCm, age, gender);
   const todayStepLog = stepHistory?.items.find((l) => l.date === todayISO());
   const stepCal = todayStepLog ? stepsToCalories(todayStepLog.steps, weightKg, heightCm) : 0;
-  const totalBurned = bmr + stepCal;
+  const workoutCal = todayWorkouts?.items.reduce((s, w) => s + (w.calories_burned ?? 0), 0) ?? 0;
+  const totalBurned = bmr + stepCal + workoutCal;
   const netCal = actualCal - totalBurned;
 
   const stagger = {
@@ -273,7 +280,7 @@ export default function HomePage() {
               Burned <span className="font-semibold text-amber-400">{Math.round(totalBurned)} kcal</span>
             </span>
             <span className="text-[10px] text-text-muted">
-              (BMR {Math.round(bmr)} + steps {Math.round(stepCal)})
+              (BMR {Math.round(bmr)} + steps {Math.round(stepCal)}{workoutCal > 0 ? ` + workout ${Math.round(workoutCal)}` : ""})
             </span>
           </div>
           <span
