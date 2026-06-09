@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { Flame, Zap, Footprints, Dumbbell, ArrowRight } from "lucide-react";
+import { Flame, Zap, Footprints, Dumbbell, ArrowRight, Bike, Utensils, TrendingDown } from "lucide-react";
+import type { FoodLog, WorkoutLog } from "@/lib/types";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { format } from "date-fns";
@@ -55,6 +56,146 @@ function MacroBar({
           animate={{ width: `${pct}%` }}
           transition={{ duration: 1, ease: [0.4, 0, 0.2, 1], delay: 0.2 }}
         />
+      </div>
+    </div>
+  );
+}
+
+// ── Calorie balance sheet ─────────────────────────────────────────────────────
+
+const MEAL_ORDER = ["breakfast", "lunch", "dinner", "snack", "pre_workout", "post_workout"] as const;
+const MEAL_LABEL: Record<string, string> = {
+  breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner",
+  snack: "Snack", pre_workout: "Pre-workout", post_workout: "Post-workout",
+};
+
+function BalanceRow({
+  icon, label, sublabel, value, positive,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  sublabel?: string;
+  value: number;
+  positive: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between py-1">
+      <div className="flex items-center gap-2.5">
+        <div className={cn(
+          "w-7 h-7 rounded-lg flex items-center justify-center shrink-0",
+          positive ? "bg-emerald-500/15" : "bg-amber-500/10"
+        )}>
+          <span className={cn("w-3.5 h-3.5", positive ? "text-emerald-400" : "text-amber-400")}>
+            {icon}
+          </span>
+        </div>
+        <div>
+          <p className="text-sm text-text-primary leading-tight">{label}</p>
+          {sublabel && <p className="text-[10px] text-text-muted leading-tight">{sublabel}</p>}
+        </div>
+      </div>
+      <p className={cn(
+        "text-sm font-semibold tabular-nums",
+        positive ? "text-emerald-400" : "text-amber-400"
+      )}>
+        {positive ? "+" : "−"}{Math.round(value).toLocaleString()} kcal
+      </p>
+    </div>
+  );
+}
+
+function CalorieBalanceSheet({
+  foodLogs, bmr, stepCal, steps, workouts,
+}: {
+  foodLogs: FoodLog[];
+  bmr: number;
+  stepCal: number;
+  steps: number;
+  workouts: WorkoutLog[];
+}) {
+  const mealTotals = new Map<string, number>();
+  for (const log of foodLogs) {
+    mealTotals.set(log.meal_type, (mealTotals.get(log.meal_type) ?? 0) + log.calories);
+  }
+
+  const totalIn = [...mealTotals.values()].reduce((s, v) => s + v, 0);
+  const workoutCal = workouts
+    .filter((w) => !w.is_rest_day)
+    .reduce((s, w) => s + (w.calories_burned ?? 0), 0);
+  const totalOut = bmr + stepCal + workoutCal;
+  const net = totalIn - totalOut;
+
+  return (
+    <div className="card-surface p-4">
+      <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
+        Today&apos;s Balance
+      </p>
+
+      {/* Food IN */}
+      {MEAL_ORDER.filter((m) => mealTotals.has(m)).length > 0 ? (
+        MEAL_ORDER.filter((m) => mealTotals.has(m)).map((meal) => (
+          <BalanceRow
+            key={meal}
+            icon={<Utensils />}
+            label={MEAL_LABEL[meal]}
+            value={mealTotals.get(meal)!}
+            positive={true}
+          />
+        ))
+      ) : (
+        <p className="text-xs text-text-muted py-1 italic">No meals logged yet</p>
+      )}
+
+      <div className="my-2 border-t border-white/5" />
+
+      {/* Burns OUT */}
+      <BalanceRow
+        icon={<Flame />}
+        label="Body burn"
+        sublabel={`BMR · ${Math.round(bmr).toLocaleString()} kcal base`}
+        value={bmr}
+        positive={false}
+      />
+      {stepCal > 0 && (
+        <BalanceRow
+          icon={<Footprints />}
+          label="Walking"
+          sublabel={`${steps.toLocaleString()} steps`}
+          value={stepCal}
+          positive={false}
+        />
+      )}
+      {workouts
+        .filter((w) => !w.is_rest_day && (w.calories_burned ?? 0) > 0)
+        .map((w) => (
+          <BalanceRow
+            key={w.id}
+            icon={w.workout_section === "cardio" ? <Bike /> : <Dumbbell />}
+            label={w.title}
+            sublabel={w.workout_section === "strength" ? "Strength" : "Cardio"}
+            value={w.calories_burned!}
+            positive={false}
+          />
+        ))}
+
+      {/* Net */}
+      <div className="mt-3 pt-3 border-t border-white/10 flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <TrendingDown className={cn("w-4 h-4", net < 0 ? "text-emerald-400" : "text-amber-400")} />
+          <p className="text-sm font-semibold text-text-primary">Net</p>
+        </div>
+        <div className="text-right">
+          <p className={cn(
+            "text-xl font-bold tabular-nums",
+            net < 0 ? "text-emerald-400" : "text-amber-400"
+          )}>
+            {net < 0 ? `${Math.abs(Math.round(net)).toLocaleString()}` : `+${Math.round(net).toLocaleString()}`}
+            <span className="text-sm font-normal ml-1">kcal</span>
+          </p>
+          <p className="text-[10px] text-text-muted">
+            {net < 0 ? "deficit · on track" : "surplus · ate more than burned"}
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -168,9 +309,6 @@ export default function HomePage() {
   const bmr = calculateBmr(weightKg, heightCm, age, gender);
   const todayStepLog = stepHistory?.items.find((l) => l.date === todayISO());
   const stepCal = todayStepLog ? stepsToCalories(todayStepLog.steps, weightKg, heightCm) : 0;
-  const workoutCal = todayWorkouts?.items.reduce((s, w) => s + (w.calories_burned ?? 0), 0) ?? 0;
-  const totalBurned = bmr + stepCal + workoutCal;
-  const netCal = actualCal - totalBurned;
 
   const stagger = {
     visible: { transition: { staggerChildren: 0.07 } },
@@ -268,29 +406,15 @@ export default function HomePage() {
           </div>
         </motion.div>
 
-        {/* Burned + net bar */}
-        <motion.div
-          variants={fadeUp}
-          className="flex items-center justify-between rounded-2xl px-4 py-3"
-          style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
-        >
-          <div className="flex items-center gap-2">
-            <Flame className="w-4 h-4 text-amber-400" />
-            <span className="text-sm text-text-secondary">
-              Burned <span className="font-semibold text-amber-400">{Math.round(totalBurned)} kcal</span>
-            </span>
-            <span className="text-[10px] text-text-muted">
-              (BMR {Math.round(bmr)} + steps {Math.round(stepCal)}{workoutCal > 0 ? ` + workout ${Math.round(workoutCal)}` : ""})
-            </span>
-          </div>
-          <span
-            className={cn(
-              "text-sm font-bold",
-              netCal < 0 ? "text-emerald-400" : "text-amber-400"
-            )}
-          >
-            {netCal < 0 ? `${Math.abs(Math.round(netCal))} deficit` : `+${Math.round(netCal)} surplus`}
-          </span>
+        {/* Calorie balance sheet */}
+        <motion.div variants={fadeUp}>
+          <CalorieBalanceSheet
+            foodLogs={daily?.logs ?? []}
+            bmr={bmr}
+            stepCal={stepCal}
+            steps={todayStepLog?.steps ?? 0}
+            workouts={todayWorkouts?.items ?? []}
+          />
         </motion.div>
 
         {/* Stats row */}
