@@ -155,4 +155,5 @@ class SectionedWorkoutCreate(TrackBaseSchema):
     strength_exercises: list[StrengthExerciseInput] = Field(default_factory=list)
 
     notes: str | None = Field(default=None, max_length=2000)
+    logged_at: datetime | None = Field(default=None)
     logged_at: datetime | None = None

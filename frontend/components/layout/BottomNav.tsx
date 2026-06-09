@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Home, Plus, Footprints, TrendingUp, Bot } from "lucide-react";
+import { Home, Plus, Footprints, TrendingUp, Bot, User } from "lucide-react";
 import { cn } from "@/lib/utils/format";
 
 const NAV_ITEMS = [
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/coach",    icon: Bot,        label: "Coach"    },
   { href: "/activity", icon: Footprints, label: "Activity" },
   { href: "/progress", icon: TrendingUp, label: "Progress" },
+  { href: "/profile",  icon: User,       label: "Profile"  },
 ] as const;
 
 export function BottomNav() {

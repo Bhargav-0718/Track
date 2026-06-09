@@ -547,6 +547,7 @@ function CardioSection({ onLogged }: { onLogged: () => void }) {
   const [isRest, setIsRest] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   function addRow() { setRows((r) => [...r, newCardioRow(String(nextId))]); setNextId((n) => n + 1); }
   function removeRow(id: string) { if (rows.length > 1) setRows((r) => r.filter((row) => row.id !== id)); }
@@ -558,6 +559,7 @@ function CardioSection({ onLogged }: { onLogged: () => void }) {
     e.preventDefault();
     setLoading(true);
     setSuccess(null);
+    setError(null);
     try {
       if (isRest) {
         await workoutApi.createSectionedLog({ section: "rest_day", is_rest_day: true });
@@ -578,12 +580,14 @@ function CardioSection({ onLogged }: { onLogged: () => void }) {
       setRows([newCardioRow(String(nextId))]);
       setNextId((n) => n + 1);
       onLogged();
-    } catch {
-      /* silent */
+    } catch (err: any) {
+      setError(err?.response?.data?.detail ?? err?.message ?? "Failed to log cardio — check your connection");
     } finally {
       setLoading(false);
     }
   }
+
+  const hasAiEstimate = !isRest && rows.some((r) => r.activity.trim() && r.duration.trim() && !r.calories.trim());
 
   return (
     <form onSubmit={handleLog} className="space-y-4">
@@ -634,11 +638,25 @@ function CardioSection({ onLogged }: { onLogged: () => void }) {
       )}
 
       <AnimatePresence>
+        {loading && hasAiEstimate && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="flex items-center gap-3 bg-blue-500/10 border border-blue-500/20 rounded-xl px-3 py-2.5">
+            <div className="w-4 h-4 border-2 border-blue-400/30 border-t-blue-400 rounded-full animate-spin shrink-0" />
+            <p className="text-sm text-blue-300">AI is estimating calories for your activities…</p>
+          </motion.div>
+        )}
         {success && (
           <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
             className="flex items-center gap-2 bg-emerald-500/10 rounded-xl px-3 py-2.5">
             <Check className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2.5} />
             <p className="text-sm text-emerald-400">{success}</p>
+          </motion.div>
+        )}
+        {error && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="flex items-center gap-2 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2.5">
+            <X className="w-4 h-4 text-rose-400 shrink-0" />
+            <p className="text-sm text-rose-400">{error}</p>
           </motion.div>
         )}
       </AnimatePresence>
