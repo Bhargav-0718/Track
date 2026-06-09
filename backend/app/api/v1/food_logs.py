@@ -31,25 +31,24 @@ router = APIRouter(prefix="/food-logs", tags=["food-logs"])
 
 @router.post(
     "/",
-    response_model=FoodLogResponse,
+    response_model=list[FoodLogResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Log a food entry",
 )
 async def create_food_log(
     data: FoodLogCreate,
     current_user_id: CurrentUserID,
-) -> FoodLogResponse:
+) -> list[FoodLogResponse]:
     """
-    Log a food entry.
+    Log a food entry. Always returns a list.
 
     **Quick log mode**: Provide `raw_input` with natural language description.
     AI estimation pipeline runs: memory → INDB dataset → LLM fallback.
+    Compound meals (e.g. "3 roti with dal and sabzi") return multiple items,
+    each with a shared `meal_group_id` for UI grouping.
 
     **Manual mode**: Provide `food_name` + `calories` (and optionally macros).
     Stored directly with `confidence_level: confirmed`.
-
-    The `logged_at` field defaults to now — pass a custom timestamp to log
-    meals that were eaten earlier.
     """
     service = FoodService()
     return await service.create_log(current_user_id, data)

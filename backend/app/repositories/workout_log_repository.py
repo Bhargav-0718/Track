@@ -109,6 +109,8 @@ class WorkoutLogRepository(BaseRepository[WorkoutLog]):
         raw_input: str | None = None,
         logged_at: datetime | None = None,
         health_connect_id: str | None = None,
+        workout_section: str = "app_workout",
+        is_rest_day: bool = False,
     ) -> WorkoutLog:
         """Create a new workout log document."""
         log = WorkoutLog(
@@ -124,6 +126,8 @@ class WorkoutLogRepository(BaseRepository[WorkoutLog]):
             raw_input=raw_input,
             logged_at=logged_at or datetime.now(dt_timezone.utc),
             health_connect_id=health_connect_id,
+            workout_section=workout_section,
+            is_rest_day=is_rest_day,
         )
         await log.insert()
         return log

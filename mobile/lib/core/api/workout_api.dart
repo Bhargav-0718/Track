@@ -40,6 +40,29 @@ class WorkoutApi {
     return WorkoutLog.fromJson(response.data!);
   }
 
+  /// Log a workout using the 3-section UI format (App / Cardio / Strength / Rest).
+  static Future<WorkoutLog> logSectioned({
+    required String section,
+    bool isRestDay = false,
+    double? caloriesFromApp,
+    List<Map<String, dynamic>>? cardioActivities,
+    List<Map<String, dynamic>>? strengthExercises,
+    String? notes,
+  }) async {
+    final response = await dio.post<Map<String, dynamic>>(
+      '/api/v1/workout-logs/log/',
+      data: {
+        'section': section,
+        'is_rest_day': isRestDay,
+        if (caloriesFromApp != null) 'calories_from_app': caloriesFromApp,
+        if (cardioActivities != null) 'cardio_activities': cardioActivities,
+        if (strengthExercises != null) 'strength_exercises': strengthExercises,
+        if (notes != null) 'notes': notes,
+      },
+    );
+    return WorkoutLog.fromJson(response.data!);
+  }
+
   static Future<void> delete(String id) async {
     await dio.delete('/api/v1/workout-logs/$id/');
   }

@@ -18,6 +18,9 @@ class FoodLog(BaseDocument):
     nutrition_cache_id: UUID | None = None
     memory_id: UUID | None = None
 
+    # ── Meal Grouping (compound dishes) ───────────────────────────────────────
+    meal_group_id: UUID | None = None  # shared across all components of one compound log
+
     # ── Timing ────────────────────────────────────────────────────────────────
     logged_at: datetime = None  # type: ignore[assignment]
 
@@ -37,6 +40,8 @@ class FoodLog(BaseDocument):
     brand_name: str | None = None
     portion_description: str | None = None
     portion_grams: float | None = None
+    quantity: float = 1.0              # number of units (e.g. 3 for "3 roti")
+    calories_per_unit: float | None = None  # calories / quantity, for display
 
     # ── Nutrition ─────────────────────────────────────────────────────────────
     calories: float

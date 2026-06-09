@@ -122,10 +122,16 @@ RULE 2 — COMPOUND DISHES (is_compound_dish + components)
   If the meal contains multiple distinct foods, set is_compound_dish=true
   and list each food as a separate component string.
 
-  "dal chawal"            → components: ["dal", "rice"]
-  "roti sabzi"            → components: ["roti", "sabzi"]
-  "2 roti aur aloo bhaji" → components: ["roti", "aloo bhaji"]
-  "rajma chawal"          → components: ["rajma", "rice"]
+  CRITICAL: Preserve explicit quantities INSIDE the component string.
+  If the user says "3 roti", the component must be "3 roti" (NOT just "roti").
+  This allows per-item breakdown display.
+
+  "dal chawal"              → components: ["dal", "rice"]
+  "roti sabzi"              → components: ["roti", "sabzi"]
+  "2 roti aur aloo bhaji"   → components: ["2 roti", "aloo bhaji"]
+  "3 roti bhindi sabji kadhi" → components: ["3 roti", "bhindi sabji", "kadhi"]
+  "rajma chawal"            → components: ["rajma", "rice"]
+  "3 idli with sambar"      → components: ["3 idli", "sambar"]
   "jowar bhakri with sabji" → components: ["jowar bhakri", "vegetable sabji"]
 
   Each component will be estimated separately — this is critical for accuracy.
@@ -376,4 +382,192 @@ async def estimate_nutrition_fallback(
         calories=result.calories_per_100g,
         confidence=result.confidence_score,
     )
+    return result
+
+
+# ── Workout Estimation ─────────────────────────────────────────────────────────
+
+class CardioActivityEstimate(BaseModel):
+    """MET and calorie estimate for a cardio activity."""
+    canonical_name: str = Field(
+        description="Clean, canonical English activity name. E.g. 'Treadmill Walk', 'Cycling', 'Jump Rope with Dumbbells'"
+    )
+    met_value: float = Field(
+        description="MET (Metabolic Equivalent of Task) for this activity. "
+                    "Walking=3-4, Jogging=7, Cycling=8, HIIT=10+. "
+                    "Account for resistance (dumbbells raise MET significantly)."
+    )
+    estimated_calories: float = Field(
+        description="Total calories burned = MET × weight_kg × (duration_minutes / 60). "
+                    "Use provided duration and user weight."
+    )
+    confidence: float = Field(
+        description="Confidence 0-1. 0.6-0.8 for common activities, 0.4-0.6 for unusual ones."
+    )
+    assumptions: list[str] = Field(
+        description="List of assumptions made. E.g. 'Assumed moderate pace', 'Dumbbell resistance adds ~30% to MET'"
+    )
+
+
+class StrengthExerciseEstimate(BaseModel):
+    """Calorie estimate for one strength exercise (given sets/reps/weight)."""
+    canonical_name: str = Field(
+        description="Clean canonical exercise name. E.g. 'Bench Press', 'Barbell Squat'"
+    )
+    calories_burned: float = Field(
+        description="Total calories burned for the given sets × reps × weight_kg. "
+                    "Typical: 3×10×80kg bench press ≈ 30-50 kcal. Be realistic — strength training burns LESS than cardio."
+    )
+    calories_per_volume_unit: float = Field(
+        description="calories_burned / (sets × reps × weight_kg). "
+                    "This rate is cached for future scaling when weight/reps change. "
+                    "For bodyweight (weight_kg=0), divide by (sets × reps) instead."
+    )
+    confidence: float = Field(
+        description="Confidence 0-1. 0.5-0.7 typical for strength estimation."
+    )
+    assumptions: list[str] = Field(
+        description="Specific assumptions. E.g. 'Assumed 60s rest between sets', 'Compound lift burns more than isolation'"
+    )
+
+
+_CARDIO_SYSTEM_PROMPT = """You are an exercise physiology expert estimating calories burned during cardio activities.
+
+Use MET (Metabolic Equivalent of Task) values to estimate calorie expenditure:
+  calories = MET × weight_kg × (duration_minutes / 60)
+
+MET REFERENCE TABLE:
+  Slow walk (3 km/h)         : 2.5
+  Brisk walk (5-6 km/h)      : 3.5-4.0
+  Treadmill walk (incline)   : 4.0-5.0
+  Jogging (8 km/h)           : 7.0
+  Running (12 km/h)          : 11.0
+  Cycling (leisure)          : 6.0
+  Cycling (vigorous)         : 10.0
+  Jump rope / skipping       : 10.0-12.0  ← increases +20-30% with added resistance (dumbbells)
+  Swimming                   : 8.0
+  Rowing machine             : 7.0-9.0
+  Elliptical                 : 6.0-8.0
+  HIIT / circuit training    : 10.0-14.0
+  Stair climbing             : 8.0-10.0
+
+MODIFIERS:
+  Added resistance (dumbbells, vest): +20-40% to base MET
+  High intensity / fast pace:         +20-30%
+  Intervals vs steady state:          +10-20% for intervals
+
+Return the canonical activity name, MET value, total calories, and your assumptions.
+"""
+
+_STRENGTH_SYSTEM_PROMPT = """You are an exercise physiology expert estimating calories burned during strength training.
+
+For each exercise, estimate total calories burned for the given sets × reps × weight_kg.
+
+GUIDELINES:
+  - Strength training burns FEWER calories than cardio (mostly post-exercise EPOC)
+  - Compound lifts (squat, deadlift, bench, row) burn more than isolation (curl, extension)
+  - Typical per-set burn: 5-15 kcal depending on weight and effort
+  - Rest periods count as minimal calorie burn
+
+REFERENCE EXAMPLES (for calibration):
+  Bench Press 3×10×80kg   : ~35-50 kcal
+  Barbell Squat 4×8×100kg : ~55-75 kcal
+  Deadlift 3×5×120kg      : ~45-65 kcal
+  Bicep Curl 3×12×15kg    : ~10-18 kcal
+  Push-ups 3×20 (BW)      : ~15-25 kcal
+
+IMPORTANT: Also return calories_per_volume_unit = calories_burned / (sets × reps × weight_kg).
+For bodyweight exercises (weight_kg=0), use calories_burned / (sets × reps) instead.
+This rate is CACHED to scale future estimates when weight/reps/sets change.
+"""
+
+
+async def estimate_cardio_activity(
+    activity_description: str,
+    duration_minutes: float,
+    user_weight_kg: float,
+) -> CardioActivityEstimate:
+    """Estimate calories for a cardio activity using MET method."""
+    client = get_openai_client()
+
+    user_msg = (
+        f"Activity: {activity_description}\n"
+        f"Duration: {duration_minutes} minutes\n"
+        f"User weight: {user_weight_kg:.1f} kg\n\n"
+        f"Calculate calories = MET × {user_weight_kg:.1f} × ({duration_minutes}/60)"
+    )
+
+    logger.info("llm_cardio_estimate", activity=activity_description[:80], duration=duration_minutes)
+
+    response = await client.beta.chat.completions.parse(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": _CARDIO_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        response_format=CardioActivityEstimate,
+        temperature=0.1,
+        max_tokens=400,
+    )
+
+    result = response.choices[0].message.parsed
+    if result is None:
+        # Hard fallback
+        met = 5.0
+        return CardioActivityEstimate(
+            canonical_name=activity_description,
+            met_value=met,
+            estimated_calories=round(met * user_weight_kg * duration_minutes / 60, 1),
+            confidence=0.3,
+            assumptions=["LLM parse failed — used generic MET=5 fallback"],
+        )
+
+    logger.info("llm_cardio_complete", activity=result.canonical_name, calories=result.estimated_calories)
+    return result
+
+
+async def estimate_strength_exercise(
+    exercise_name: str,
+    sets: int,
+    reps: int,
+    weight_kg: float,
+    user_weight_kg: float,
+) -> StrengthExerciseEstimate:
+    """Estimate calories burned for one strength exercise."""
+    client = get_openai_client()
+
+    volume = sets * reps * weight_kg if weight_kg > 0 else sets * reps
+    user_msg = (
+        f"Exercise: {exercise_name}\n"
+        f"Sets: {sets}, Reps: {reps}, Weight: {weight_kg} kg\n"
+        f"Volume = {volume:.0f} {'(sets×reps×kg)' if weight_kg > 0 else '(sets×reps bodyweight)'}\n"
+        f"User bodyweight: {user_weight_kg:.1f} kg"
+    )
+
+    logger.info("llm_strength_estimate", exercise=exercise_name, sets=sets, reps=reps, weight=weight_kg)
+
+    response = await client.beta.chat.completions.parse(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": _STRENGTH_SYSTEM_PROMPT},
+            {"role": "user", "content": user_msg},
+        ],
+        response_format=StrengthExerciseEstimate,
+        temperature=0.1,
+        max_tokens=400,
+    )
+
+    result = response.choices[0].message.parsed
+    if result is None:
+        fallback_cal = max(5.0, sets * reps * 0.2)
+        fallback_volume = volume if volume > 0 else 1.0
+        return StrengthExerciseEstimate(
+            canonical_name=exercise_name,
+            calories_burned=fallback_cal,
+            calories_per_volume_unit=fallback_cal / fallback_volume,
+            confidence=0.3,
+            assumptions=["LLM parse failed — rough estimate only"],
+        )
+
+    logger.info("llm_strength_complete", exercise=result.canonical_name, calories=result.calories_burned)
     return result

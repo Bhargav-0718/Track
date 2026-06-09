@@ -27,9 +27,11 @@ async def init_db() -> None:
 
     # Import all document models for Beanie registration
     from app.models.behavior_event import BehaviorEvent
+    from app.models.cardio_activity_cache import CardioActivityCache
     from app.models.correction_event import CorrectionEvent
     from app.models.daily_report import DailyReport
     from app.models.daily_summary import DailySummary
+    from app.models.exercise_cache import ExerciseCache
     from app.models.food_log import FoodLog
     from app.models.food_memory import FoodMemory
     from app.models.nutrition_cache import NutritionCache
@@ -53,6 +55,8 @@ async def init_db() -> None:
             WorkoutLog,
             FoodMemory,
             NutritionCache,
+            CardioActivityCache,
+            ExerciseCache,
             DailySummary,
             CorrectionEvent,
             ProgressCheckpoint,

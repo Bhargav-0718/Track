@@ -9,6 +9,7 @@ import '../../core/models/step_log.dart';
 import '../../core/theme/app_theme.dart';
 import '../../providers/activity_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/health_connect_provider.dart';
 import '../../widgets/progress_ring.dart';
 
 class ActivityScreen extends ConsumerStatefulWidget {
@@ -179,12 +180,16 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
               ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.05, end: 0),
               const SizedBox(height: 16),
 
+              // ── Health Connect sync ──────────────────────────────────────
+              _HealthConnectCard().animate().fadeIn(delay: 100.ms, duration: 400.ms),
+              const SizedBox(height: 16),
+
               // ── Log steps input ──────────────────────────────────────────
               _LogStepsCard(
                 controller: _stepsCtrl,
                 saving: _saving,
                 onSave: _save,
-              ).animate().fadeIn(delay: 100.ms, duration: 400.ms),
+              ).animate().fadeIn(delay: 150.ms, duration: 400.ms),
               const SizedBox(height: 20),
 
               // ── 7-day bar chart ──────────────────────────────────────────
@@ -686,6 +691,245 @@ class _BmrInfoCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      );
+}
+
+// ── Health Connect sync card ──────────────────────────────────────────────────
+
+class _HealthConnectCard extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hc = ref.watch(healthConnectProvider);
+
+    if (hc.status == HcStatus.unavailable) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceElevated,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.health_and_safety_outlined,
+                color: AppColors.textMuted, size: 20),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Google Health Connect is not available on this device.',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final isSyncing = hc.status == HcStatus.syncing || hc.status == HcStatus.checking;
+    final needsPermission = hc.status == HcStatus.permissionDenied;
+    final summary = hc.lastSummary;
+    final syncedAt = hc.lastSyncedAt;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: hc.hasSyncedToday
+              ? AppColors.emerald.withAlpha(80)
+              : AppColors.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.emerald.withAlpha(25),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.health_and_safety_rounded,
+                    color: AppColors.emerald, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Google Health Connect',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 14),
+                    ),
+                    Text(
+                      needsPermission
+                          ? 'Permission required'
+                          : hc.hasSyncedToday
+                              ? 'Synced today · ${_fmt(syncedAt!)}'
+                              : syncedAt != null
+                                  ? 'Last synced ${_fmtDate(syncedAt)}'
+                                  : 'Not synced yet',
+                      style: TextStyle(
+                        color: needsPermission
+                            ? AppColors.amber
+                            : hc.hasSyncedToday
+                                ? AppColors.emerald
+                                : AppColors.textMuted,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Action button
+              isSyncing
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2.5, color: AppColors.emerald),
+                    )
+                  : needsPermission
+                      ? _ActionButton(
+                          label: 'Connect',
+                          color: AppColors.amber,
+                          onTap: () =>
+                              ref.read(healthConnectProvider.notifier)
+                                  .requestPermissions(),
+                        )
+                      : _ActionButton(
+                          label: 'Sync',
+                          color: AppColors.emerald,
+                          onTap: () =>
+                              ref.read(healthConnectProvider.notifier)
+                                  .syncToday(),
+                        ),
+            ],
+          ),
+
+          // Error message
+          if (hc.status == HcStatus.error && hc.errorMessage != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.red.withAlpha(20),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                hc.errorMessage!,
+                style:
+                    const TextStyle(color: AppColors.red, fontSize: 12),
+              ),
+            ),
+          ],
+
+          // Synced data chips
+          if (summary != null && hc.hasSyncedToday) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _HcChip(
+                  icon: Icons.directions_walk_rounded,
+                  label: 'Steps',
+                  value: NumberFormat('#,###').format(summary.steps),
+                  color: AppColors.blue,
+                ),
+                const SizedBox(width: 8),
+                _HcChip(
+                  icon: Icons.local_fire_department_rounded,
+                  label: 'Active cal',
+                  value:
+                      '${summary.activeCaloriesBurned.toInt()} kcal',
+                  color: AppColors.amber,
+                ),
+                if (summary.workouts.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  _HcChip(
+                    icon: Icons.fitness_center_rounded,
+                    label: 'Workouts',
+                    value: summary.workouts.length.toString(),
+                    color: AppColors.purple,
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _fmt(DateTime dt) => DateFormat('h:mm a').format(dt);
+  String _fmtDate(DateTime dt) => DateFormat('MMM d').format(dt);
+}
+
+class _ActionButton extends StatelessWidget {
+  const _ActionButton(
+      {required this.label, required this.color, required this.onTap});
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: color.withAlpha(25),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withAlpha(60)),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+        ),
+      );
+}
+
+class _HcChip extends StatelessWidget {
+  const _HcChip(
+      {required this.icon,
+      required this.label,
+      required this.value,
+      required this.color});
+  final IconData icon;
+  final String label, value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+          decoration: BoxDecoration(
+            color: color.withAlpha(18),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withAlpha(35)),
+          ),
+          child: Column(
+            children: [
+              Icon(icon, color: color, size: 16),
+              const SizedBox(height: 3),
+              Text(value,
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: color)),
+              Text(label,
+                  style: const TextStyle(
+                      fontSize: 9, color: AppColors.textMuted)),
+            ],
+          ),
         ),
       );
 }

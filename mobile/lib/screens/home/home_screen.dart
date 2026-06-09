@@ -11,6 +11,7 @@ import '../../core/theme/app_theme.dart';
 import '../../providers/activity_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/food_provider.dart';
+import '../../providers/health_connect_provider.dart';
 import '../../providers/workout_provider.dart';
 import '../../widgets/progress_ring.dart';
 
@@ -22,29 +23,47 @@ class HomeScreen extends ConsumerWidget {
     final user = ref.watch(authProvider).user;
     final foodAsync = ref.watch(todayFoodProvider);
     final stepHistoryAsync = ref.watch(stepHistoryProvider);
+    final hc = ref.watch(healthConnectProvider);
     final today = DateFormat('EEEE, MMM d').format(DateTime.now());
 
-    // Compute today's burned calories from steps + BMR
+    // Compute today's burned calories from BMR + activity
     final weightKg = user?.weightKg ?? 70.0;
     final heightCm = user?.heightCm ?? 170.0;
     final age = user?.age ?? 25;
     final gender = user?.gender ?? 'other';
     final bmr = calculateBmr(weightKg: weightKg, heightCm: heightCm, age: age, gender: gender);
-    final todayLog = stepHistoryAsync.value?.firstWhere(
-      (l) {
-        final now = DateTime.now();
-        return l.date.year == now.year && l.date.month == now.month && l.date.day == now.day;
-      },
-      orElse: () => StepLog(id: '', date: DateTime.now(), steps: 0),
-    );
-    final stepCal = todayLog != null ? stepsToCalories(steps: todayLog.steps, weightKg: weightKg, heightCm: heightCm) : 0.0;
-    final totalBurned = bmr + stepCal;
+
+    // Prefer Health Connect active calories when available and synced today
+    double activityCal;
+    if (hc.hasSyncedToday && hc.lastSummary != null) {
+      activityCal = hc.lastSummary!.activeCaloriesBurned > 0
+          ? hc.lastSummary!.activeCaloriesBurned
+          : stepsToCalories(steps: hc.lastSummary!.steps, weightKg: weightKg, heightCm: heightCm);
+    } else {
+      final todayLog = stepHistoryAsync.value?.firstWhere(
+        (l) {
+          final now = DateTime.now();
+          return l.date.year == now.year && l.date.month == now.month && l.date.day == now.day;
+        },
+        orElse: () => StepLog(id: '', date: DateTime.now(), steps: 0),
+      );
+      activityCal = todayLog != null
+          ? stepsToCalories(steps: todayLog.steps, weightKg: weightKg, heightCm: heightCm)
+          : 0.0;
+    }
+    final totalBurned = bmr + activityCal;
 
     return Scaffold(
       body: RefreshIndicator(
         color: AppColors.emerald,
         backgroundColor: AppColors.surface,
-        onRefresh: () => ref.read(todayFoodProvider.notifier).load(),
+        onRefresh: () async {
+          await ref.read(todayFoodProvider.notifier).load();
+          // Also sync Health Connect in the background on pull-to-refresh
+          if (hc.status == HcStatus.ready) {
+            ref.read(healthConnectProvider.notifier).syncToday();
+          }
+        },
         child: CustomScrollView(
           slivers: [
             // App bar
@@ -91,6 +110,7 @@ class HomeScreen extends ConsumerWidget {
                       summary: summary,
                       targetCalories: user?.targetCalories?.toDouble() ?? 2000,
                       totalBurned: totalBurned,
+                      burnedFromHc: hc.hasSyncedToday,
                     ),
                   ).animate().fadeIn(duration: 400.ms).slideY(begin: 0.1, end: 0),
                   const SizedBox(height: 16),
@@ -111,7 +131,7 @@ class HomeScreen extends ConsumerWidget {
                   const SizedBox(height: 20),
 
                   // ── Quick actions ──────────────────────────────────────────
-                  _SectionHeader(title: 'Quick Actions'),
+                  const _SectionHeader(title: 'Quick Actions'),
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -193,10 +213,12 @@ class _CalorieCard extends StatelessWidget {
     required this.summary,
     required this.targetCalories,
     required this.totalBurned,
+    this.burnedFromHc = false,
   });
   final dynamic summary;
   final double targetCalories;
   final double totalBurned;
+  final bool burnedFromHc;
 
   @override
   Widget build(BuildContext context) {
@@ -268,6 +290,11 @@ class _CalorieCard extends StatelessWidget {
                     Text('Burned ${totalBurned.toInt()} kcal',
                         style: const TextStyle(
                             color: AppColors.textSecondary, fontSize: 12)),
+                    if (burnedFromHc) ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.health_and_safety_rounded,
+                          color: AppColors.emerald, size: 12),
+                    ],
                   ],
                 ),
                 Row(

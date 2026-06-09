@@ -4,12 +4,23 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-/// Base URL switches automatically:
-///   Web (Chrome dev)   → localhost:8000 (same machine)
-///   Android emulator   → 10.0.2.2:8000 (emulator loopback to host)
-///   Physical device    → change to your LAN IP e.g. http://192.168.1.X:8000
-///   Production         → https://api.trackapp.in
-final String _baseUrl = kIsWeb ? 'http://localhost:8000' : 'http://10.0.2.2:8000';
+/// Base URL — set via --dart-define at build/run time:
+///
+///   Emulator (default):
+///     flutter run
+///
+///   Physical device on local Wi-Fi:
+///     flutter run --dart-define=API_BASE_URL=http://192.168.1.X:8000
+///
+///   Production:
+///     flutter run --dart-define=API_BASE_URL=https://api.trackapp.in
+///
+/// In VS Code add a launch config (see .vscode/launch.json) so you never
+/// have to type the flag manually.
+const String _baseUrl = String.fromEnvironment(
+  'API_BASE_URL',
+  defaultValue: 'http://10.0.2.2:8000', // emulator default
+);
 
 const String _tokenKey = 'track_token';
 

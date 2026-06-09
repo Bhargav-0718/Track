@@ -10,7 +10,7 @@ const PREFIX = "/api/v1/food-logs";
 
 export const foodApi = {
   createLog: (data: FoodLogCreate) =>
-    api.post<FoodLog>(PREFIX + "/", data),
+    api.post<FoodLog[]>(PREFIX + "/", data),
 
   getDaily: (date?: string) =>
     api.get<DailyFoodSummary>(

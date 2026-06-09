@@ -10,6 +10,7 @@ const _destinations = [
   _Destination('/log', 'Log', Icons.add_circle_rounded, Icons.add_circle_outline_rounded),
   _Destination('/activity', 'Activity', Icons.directions_walk_rounded, Icons.directions_walk_outlined),
   _Destination('/insights', 'Insights', Icons.insights_rounded, Icons.insights_outlined),
+  _Destination('/coach', 'Coach', Icons.bolt_rounded, Icons.bolt_outlined),
   _Destination('/profile', 'Profile', Icons.person_rounded, Icons.person_outlined),
 ];
 

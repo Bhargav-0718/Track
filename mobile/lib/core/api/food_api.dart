@@ -21,13 +21,13 @@ class FoodApi {
   }
 
   /// AI-powered food estimation from text.
-  /// Backend uses the single POST /food-logs/ endpoint with raw_input field.
-  static Future<FoodLog> estimateAndLog({
+  /// Backend returns a list (compound meals split into per-component logs).
+  static Future<List<FoodLog>> estimateAndLog({
     required String rawInput,
     required MealType mealType,
     String? loggedAt,
   }) async {
-    final response = await dio.post<Map<String, dynamic>>(
+    final response = await dio.post<List<dynamic>>(
       '/api/v1/food-logs/',
       data: {
         'raw_input': rawInput,
@@ -35,7 +35,9 @@ class FoodApi {
         if (loggedAt != null) 'logged_at': loggedAt,
       },
     );
-    return FoodLog.fromJson(response.data!);
+    return (response.data!)
+        .map((e) => FoodLog.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   /// Manual food log entry

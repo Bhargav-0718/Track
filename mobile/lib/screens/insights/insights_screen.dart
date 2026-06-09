@@ -282,7 +282,7 @@ class _CalorieTrendCard extends StatelessWidget {
                 gridData: FlGridData(
                   drawHorizontalLine: true,
                   drawVerticalLine: false,
-                  getDrawingHorizontalLine: (_) => FlLine(
+                  getDrawingHorizontalLine: (_) => const FlLine(
                     color: AppColors.border,
                     strokeWidth: 1,
                   ),

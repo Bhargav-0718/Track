@@ -5,6 +5,7 @@ Stage 1: MEMORY    → Python cosine similarity search on user's food history
 Stage 2: DATABASE  → Python string similarity on INDB nutrition cache
 Stage 3: LLM       → GPT-4o mini fallback with structured output
 """
+import re
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -40,6 +41,8 @@ class EstimationResult:
     memory_id: UUID | None = None
     nutrition_cache_id: UUID | None = None
     parse_result: FoodParseResult | None = None
+    quantity: float = 1.0
+    calories_per_unit: float | None = None
 
 
 MEMORY_HIGH_CONFIDENCE = 0.85
@@ -48,13 +51,30 @@ DB_HIGH_CONFIDENCE = 0.45
 DB_LOW_CONFIDENCE = 0.20
 
 
+def _parse_quantity(text: str) -> tuple[float, str]:
+    """Split a leading integer/decimal from a component string.
+
+    '3 roti'    → (3.0, 'roti')
+    '2.5 cups'  → (2.5, 'cups')
+    'kadhi'     → (1.0, 'kadhi')
+    """
+    m = re.match(r'^(\d+(?:\.\d+)?)\s+(.+)$', text.strip())
+    if m:
+        return float(m.group(1)), m.group(2).strip()
+    return 1.0, text.strip()
+
+
 class EstimationService:
     def __init__(self) -> None:
         self.memory_repo = FoodMemoryRepository()
         self.nutrition_repo = NutritionCacheRepository()
 
-    async def estimate(self, raw_input: str, user_id: UUID) -> EstimationResult:
-        """Run the full 3-stage estimation pipeline."""
+    async def estimate(self, raw_input: str, user_id: UUID) -> list[EstimationResult]:
+        """Run the full 3-stage estimation pipeline.
+
+        Always returns a list — one item for simple foods, N items for compound
+        meals (each component becomes its own FoodLog with a shared meal_group_id).
+        """
         parse_result = await parse_food_input(raw_input)
 
         logger.info(
@@ -65,17 +85,14 @@ class EstimationService:
             components=parse_result.components,
         )
 
-        # ── Compound dish: estimate each component separately and sum ──────────
-        # This prevents "bhakri + roti + sabji" from being looked up as one
-        # string (which won't match any DB entry) and avoids the LLM guessing
-        # per-100g for an ill-defined mixed dish.
+        # ── Compound dish: estimate each component separately ──────────────────
         if parse_result.is_compound_dish and len(parse_result.components) >= 2:
             compound = await self._estimate_compound(
                 components=parse_result.components,
                 parse_result=parse_result,
                 user_id=user_id,
             )
-            if compound is not None:
+            if compound:
                 return compound
 
         portion_match = estimate_grams_from_description(parse_result.portion_description)
@@ -87,7 +104,7 @@ class EstimationService:
         if memory_result:
             memory, sim_score = memory_result
             if sim_score >= MEMORY_HIGH_CONFIDENCE:
-                return self._result_from_memory(memory, portion_grams, parse_result, sim_score)
+                return [self._result_from_memory(memory, portion_grams, parse_result, sim_score)]
 
         # Stage 2: Database
         db_result = await self._search_database(parse_result=parse_result)
@@ -95,7 +112,7 @@ class EstimationService:
         if db_result:
             cache_entry, trgm_score = db_result
             if trgm_score >= DB_LOW_CONFIDENCE:
-                return self._result_from_database(cache_entry, portion_grams, parse_result, trgm_score)
+                return [self._result_from_database(cache_entry, portion_grams, parse_result, trgm_score)]
 
         # Stage 3: LLM Fallback
         logger.info("estimation_llm_fallback", food_name=parse_result.food_name)
@@ -116,7 +133,7 @@ class EstimationService:
         assumptions = list(llm_estimate.assumptions)
         assumptions.append(f"Portion estimated at {portion_grams:.0f}g ({parse_result.portion_description})")
 
-        return EstimationResult(
+        return [EstimationResult(
             food_name=parse_result.food_name,
             portion_description=parse_result.portion_description,
             portion_grams=portion_grams,
@@ -129,102 +146,94 @@ class EstimationService:
             confidence_level=ConfidenceLevel.UNCERTAIN,
             assumptions=assumptions,
             parse_result=parse_result,
-        )
+        )]
 
     async def _estimate_compound(
         self,
         components: list[str],
         parse_result: FoodParseResult,
         user_id: UUID,
-    ) -> EstimationResult | None:
-        """
-        Estimate a compound meal by estimating each component separately and summing.
+    ) -> list[EstimationResult] | None:
+        """Estimate each component separately and return one EstimationResult per component.
 
-        Returns None if we can't get a reasonable estimate for most components
-        (caller will fall back to standard single-item pipeline).
+        Each result carries quantity + calories_per_unit for display purposes.
+        Returns None if we can't estimate at least half the components (caller falls
+        back to the single-item pipeline).
         """
         from app.services.ai.llm_service import FoodParseResult as PR
 
-        total_calories = 0.0
-        total_protein: float = 0.0
-        total_carbs: float = 0.0
-        total_fat: float = 0.0
-        has_macros = False
-        component_assumptions: list[str] = []
+        results: list[EstimationResult] = []
         success_count = 0
 
-        for component in components:
-            component = component.strip()
-            if not component:
+        for raw_component in components:
+            raw_component = raw_component.strip()
+            if not raw_component:
                 continue
 
-            # Build a minimal parse result for this component
-            # Use standard "1 serving" portion; portion lookup handles specific items (e.g. "bhakri")
+            quantity, food_name = _parse_quantity(raw_component)
+
             comp_parse = PR(
-                food_name=component,
-                aliases=[component.lower()],
-                portion_description=f"1 {component.lower()}",
-                estimated_grams=150.0,   # fallback if no portion match
+                food_name=food_name,
+                aliases=[food_name.lower()],
+                portion_description=f"1 {food_name.lower()}",
+                estimated_grams=150.0,
                 is_compound_dish=False,
                 components=[],
                 parse_confidence=0.7,
             )
 
-            # Portion from lookup table (e.g. bhakri=70g, roti=35g, katori=150g)
-            portion_match = estimate_grams_from_description(f"1 {component.lower()}")
-            portion_grams = portion_match.estimated_grams if portion_match else 150.0
+            # Per-unit portion (e.g. roti=35g, katori=150g); total = unit * quantity
+            unit_match = estimate_grams_from_description(f"1 {food_name.lower()}")
+            unit_grams = unit_match.estimated_grams if unit_match else 150.0
+            portion_grams = unit_grams * quantity
 
-            # Memory → DB → LLM for this component
+            result: EstimationResult | None = None
+
             mem = await self._search_memory(user_id=user_id, parse_result=comp_parse)
             if mem:
                 memory, sim = mem
                 if sim >= MEMORY_LOW_CONFIDENCE:
-                    r = self._result_from_memory(memory, portion_grams, comp_parse, sim)
-                    total_calories += r.calories
-                    if r.protein_g:
-                        total_protein += r.protein_g; has_macros = True
-                    if r.carbs_g:
-                        total_carbs += r.carbs_g
-                    if r.fat_g:
-                        total_fat += r.fat_g
-                    component_assumptions.append(f"{component}: {r.calories:.0f} kcal (from memory)")
-                    success_count += 1
-                    continue
+                    # _result_from_memory scales by portion_grams/100; we pass total grams
+                    result = self._result_from_memory(memory, portion_grams, comp_parse, sim)
 
-            db = await self._search_database(parse_result=comp_parse)
-            if db:
-                cache_entry, score = db
-                if score >= DB_LOW_CONFIDENCE:
-                    r = self._result_from_database(cache_entry, portion_grams, comp_parse, score)
-                    total_calories += r.calories
-                    if r.protein_g:
-                        total_protein += r.protein_g; has_macros = True
-                    if r.carbs_g:
-                        total_carbs += r.carbs_g
-                    if r.fat_g:
-                        total_fat += r.fat_g
-                    component_assumptions.append(f"{component}: {r.calories:.0f} kcal (INDB)")
-                    success_count += 1
-                    continue
+            if result is None:
+                db = await self._search_database(parse_result=comp_parse)
+                if db:
+                    cache_entry, score = db
+                    if score >= DB_LOW_CONFIDENCE:
+                        result = self._result_from_database(cache_entry, portion_grams, comp_parse, score)
 
-            # LLM fallback for this component
-            context = None
-            if db:
-                entry, sc = db
-                context = f"Closest: '{entry.food_name}' = {entry.calories_per_100g:.0f} kcal/100g"
-            llm = await estimate_nutrition_fallback(food_name=component, context=context)
-            comp_cal = llm.calories_per_100g * portion_grams / 100
-            total_calories += comp_cal
-            if llm.protein_per_100g:
-                total_protein += llm.protein_per_100g * portion_grams / 100; has_macros = True
-            if llm.carbs_per_100g:
-                total_carbs += llm.carbs_per_100g * portion_grams / 100
-            if llm.fat_per_100g:
-                total_fat += llm.fat_per_100g * portion_grams / 100
-            component_assumptions.append(f"{component}: {comp_cal:.0f} kcal (LLM estimate)")
+            if result is None:
+                context = None
+                db = await self._search_database(parse_result=comp_parse)
+                if db:
+                    entry, sc = db
+                    context = f"Closest: '{entry.food_name}' = {entry.calories_per_100g:.0f} kcal/100g"
+                llm = await estimate_nutrition_fallback(food_name=food_name, context=context)
+                comp_cal = llm.calories_per_100g * portion_grams / 100
+                result = EstimationResult(
+                    food_name=food_name,
+                    portion_description=f"{quantity:.0f} {food_name.lower()}" if quantity != 1 else f"1 {food_name.lower()}",
+                    portion_grams=portion_grams,
+                    calories=round(comp_cal, 1),
+                    protein_g=round(llm.protein_per_100g * portion_grams / 100, 1) if llm.protein_per_100g else None,
+                    carbs_g=round(llm.carbs_per_100g * portion_grams / 100, 1) if llm.carbs_per_100g else None,
+                    fat_g=round(llm.fat_per_100g * portion_grams / 100, 1) if llm.fat_per_100g else None,
+                    estimation_source=EstimationSource.LLM,
+                    confidence_score=0.5,
+                    confidence_level=ConfidenceLevel.UNCERTAIN,
+                    assumptions=[f"LLM estimate for {food_name}"],
+                    parse_result=parse_result,
+                )
+
+            # Attach quantity and per-unit calories for display
+            result.food_name = food_name
+            result.quantity = quantity
+            result.calories_per_unit = round(result.calories / quantity, 1) if quantity > 0 else result.calories
+
+            results.append(result)
             success_count += 1
 
-        # Only use compound result if we got estimates for at least half the components
         if success_count < max(1, len(components) // 2):
             return None
 
@@ -232,26 +241,10 @@ class EstimationService:
             "estimation_compound_complete",
             food=parse_result.food_name,
             components=components,
-            total_calories=total_calories,
+            total_calories=sum(r.calories for r in results),
         )
 
-        return EstimationResult(
-            food_name=parse_result.food_name,
-            portion_description=", ".join(components),
-            portion_grams=sum(
-                (estimate_grams_from_description(f"1 {c.lower()}") or type("", (), {"estimated_grams": 150.0})()).estimated_grams  # type: ignore[attr-defined]
-                for c in components
-            ),
-            calories=round(total_calories, 1),
-            protein_g=round(total_protein, 1) if has_macros else None,
-            carbs_g=round(total_carbs, 1) if has_macros else None,
-            fat_g=round(total_fat, 1) if has_macros else None,
-            estimation_source=EstimationSource.LLM,
-            confidence_score=0.55,
-            confidence_level=ConfidenceLevel.ESTIMATED,
-            assumptions=component_assumptions + ["Compound meal — components estimated separately"],
-            parse_result=parse_result,
-        )
+        return results
 
     async def _search_memory(
         self,

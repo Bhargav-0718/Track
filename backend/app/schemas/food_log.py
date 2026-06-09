@@ -149,6 +149,10 @@ class FoodLogResponse(TrackBaseSchema):
 
     image_url: str | None
 
+    meal_group_id: UUID | None = None
+    quantity: float = 1.0
+    calories_per_unit: float | None = None
+
 
 class FoodLogSummary(TrackBaseSchema):
     """Lightweight food log for list views."""
@@ -157,9 +161,15 @@ class FoodLogSummary(TrackBaseSchema):
     meal_type: str
     food_name: str
     calories: float
+    protein_g: float | None = None
+    carbs_g: float | None = None
+    fat_g: float | None = None
     confidence_level: str
     estimation_source: str
     is_corrected: bool
+    meal_group_id: UUID | None = None
+    quantity: float = 1.0
+    calories_per_unit: float | None = None
 
 
 class DailyFoodSummary(TrackBaseSchema):

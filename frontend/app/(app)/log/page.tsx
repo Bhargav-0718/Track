@@ -1,12 +1,13 @@
 "use client";
 
 import {
-  useState, useRef, useCallback, useId,
+  useState, useRef, useId,
 } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Search, Sparkles, X, ChevronDown, ChevronUp,
-  Trash2, Clock, Dumbbell, Flame, Check, Plus, History,
+  Sparkles, X, ChevronDown, ChevronUp,
+  Trash2, Dumbbell, Flame, Check, Plus, History,
+  Bike, BedDouble, Smartphone,
 } from "lucide-react";
 import useSWR, { useSWRConfig } from "swr";
 import { format } from "date-fns";
@@ -19,7 +20,10 @@ import {
   formatCalories, formatGrams, formatMealType,
   getSourceInfo, todayISO, MEAL_LABELS, cn
 } from "@/lib/utils/format";
-import type { FoodLog, MealType, WorkoutLog, WorkoutType, Exercise } from "@/lib/types";
+import type {
+  FoodLog, MealType, WorkoutLog, WorkoutType,
+  CardioActivityInput, StrengthExerciseInput, WorkoutSection,
+} from "@/lib/types";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -38,13 +42,52 @@ const WORKOUT_TYPES: { value: WorkoutType; label: string }[] = [
 
 // ── Food helpers ──────────────────────────────────────────────────────────────
 
-function groupByMeal(logs: FoodLog[]): Record<string, FoodLog[]> {
-  const groups: Record<string, FoodLog[]> = {};
+interface MealGroup {
+  id: string;           // meal_group_id for compound, log.id for singles
+  raw_input: string | null;
+  meal_type: MealType;
+  logs: FoodLog[];
+  total_calories: number;
+  total_protein_g: number | null;
+  total_carbs_g: number | null;
+  total_fat_g: number | null;
+  is_compound: boolean;
+}
+
+function buildMealGroups(logs: FoodLog[]): MealGroup[] {
+  const map = new Map<string, MealGroup>();
   for (const log of logs) {
-    if (!groups[log.meal_type]) groups[log.meal_type] = [];
-    groups[log.meal_type].push(log);
+    const key = log.meal_group_id ?? log.id;
+    if (!map.has(key)) {
+      map.set(key, {
+        id: key,
+        raw_input: log.raw_input,
+        meal_type: log.meal_type,
+        logs: [],
+        total_calories: 0,
+        total_protein_g: null,
+        total_carbs_g: null,
+        total_fat_g: null,
+        is_compound: log.meal_group_id != null,
+      });
+    }
+    const g = map.get(key)!;
+    g.logs.push(log);
+    g.total_calories += log.calories;
+    if (log.protein_g != null) g.total_protein_g = (g.total_protein_g ?? 0) + log.protein_g;
+    if (log.carbs_g != null)   g.total_carbs_g   = (g.total_carbs_g   ?? 0) + log.carbs_g;
+    if (log.fat_g != null)     g.total_fat_g     = (g.total_fat_g     ?? 0) + log.fat_g;
   }
-  return groups;
+  return Array.from(map.values());
+}
+
+function groupByMeal(groups: MealGroup[]): Record<string, MealGroup[]> {
+  const result: Record<string, MealGroup[]> = {};
+  for (const g of groups) {
+    if (!result[g.meal_type]) result[g.meal_type] = [];
+    result[g.meal_type].push(g);
+  }
+  return result;
 }
 
 // ── Tab bar ───────────────────────────────────────────────────────────────────
@@ -84,17 +127,14 @@ function TabBar({
 // FOOD TAB
 // ─────────────────────────────────────────────────────────────────────────────
 
-function FoodLogCard({ log, onDelete }: { log: FoodLog; onDelete: (id: string) => void }) {
-  const [expanded, setExpanded] = useState(false);
+function ComponentRow({
+  log,
+  onDelete,
+}: {
+  log: FoodLog;
+  onDelete: (id: string) => void;
+}) {
   const [deleting, setDeleting] = useState(false);
-  const sourceInfo = getSourceInfo(log.estimation_source);
-
-  const confidenceColor =
-    log.confidence_level === "confirmed"
-      ? "bg-emerald-500"
-      : log.confidence_level === "estimated"
-      ? "bg-amber-500"
-      : "bg-text-muted";
 
   async function handleDelete() {
     setDeleting(true);
@@ -106,6 +146,50 @@ function FoodLogCard({ log, onDelete }: { log: FoodLog; onDelete: (id: string) =
     }
   }
 
+  const qty = log.quantity ?? 1;
+  const perUnit = log.calories_per_unit;
+
+  return (
+    <div className="flex items-center gap-2 py-2 border-b border-border-subtle last:border-0">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-text-primary capitalize">{log.food_name}</p>
+        {perUnit != null && qty > 1 && (
+          <p className="text-[11px] text-text-muted tabular-nums mt-0.5">
+            × {qty % 1 === 0 ? qty.toFixed(0) : qty} · {Math.round(perUnit)} kcal/unit
+          </p>
+        )}
+      </div>
+      <p className="text-sm font-semibold tabular-nums text-text-primary shrink-0">
+        {Math.round(log.calories)} kcal
+      </p>
+      <button
+        onClick={handleDelete}
+        disabled={deleting}
+        className="p-1 text-text-muted hover:text-red-400 transition-colors disabled:opacity-40 shrink-0"
+      >
+        {deleting
+          ? <div className="w-3 h-3 border border-red-400/50 border-t-red-400 rounded-full animate-spin" />
+          : <Trash2 className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  );
+}
+
+function MealGroupCard({ group, onDelete }: { group: MealGroup; onDelete: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const firstLog = group.logs[0];
+  const confidenceColor =
+    firstLog.confidence_level === "confirmed"
+      ? "bg-emerald-500"
+      : firstLog.confidence_level === "estimated"
+      ? "bg-amber-500"
+      : "bg-text-muted";
+
+  const groupLabel = group.is_compound
+    ? group.logs.map((l) => l.food_name).join(" · ")
+    : firstLog.food_name;
+
   return (
     <motion.div
       layout
@@ -114,21 +198,19 @@ function FoodLogCard({ log, onDelete }: { log: FoodLog; onDelete: (id: string) =
       exit={{ opacity: 0, x: -20, height: 0 }}
       className="card-surface overflow-hidden mb-2"
     >
+      {/* Header row */}
       <div className="flex items-center px-4 py-3.5 gap-3">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-text-primary truncate">{log.food_name}</p>
+          <p className="text-sm font-medium text-text-primary truncate capitalize">{groupLabel}</p>
           <div className="flex items-center gap-2 mt-0.5">
             <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", confidenceColor)} />
-            <span className="text-xs text-text-muted">{formatMealType(log.meal_type)}</span>
+            <span className="text-xs text-text-muted">{formatMealType(firstLog.meal_type)}</span>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className="text-right">
-            <p className="text-sm font-bold tabular-nums">{formatCalories(log.calories)} kcal</p>
-            {log.protein_g != null && (
-              <p className="text-xs text-text-muted">P: {formatGrams(log.protein_g)}</p>
-            )}
-          </div>
+          <p className="text-sm font-bold tabular-nums">
+            {Math.round(group.total_calories)} kcal
+          </p>
           <button
             onClick={() => setExpanded(!expanded)}
             className="text-text-muted hover:text-text-secondary transition-colors p-1"
@@ -147,11 +229,19 @@ function FoodLogCard({ log, onDelete }: { log: FoodLog; onDelete: (id: string) =
             transition={{ duration: 0.2 }}
             className="border-t border-border-subtle px-4 py-3 space-y-3"
           >
+            {/* Component breakdown */}
+            <div>
+              {group.logs.map((log) => (
+                <ComponentRow key={log.id} log={log} onDelete={onDelete} />
+              ))}
+            </div>
+
+            {/* Macro totals */}
             <div className="grid grid-cols-3 gap-2">
               {[
-                { label: "Protein", value: log.protein_g, color: "text-blue-400" },
-                { label: "Carbs",   value: log.carbs_g,   color: "text-amber-400" },
-                { label: "Fat",     value: log.fat_g,     color: "text-violet-400" },
+                { label: "Protein", value: group.total_protein_g, color: "text-blue-400" },
+                { label: "Carbs",   value: group.total_carbs_g,   color: "text-amber-400" },
+                { label: "Fat",     value: group.total_fat_g,     color: "text-violet-400" },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-surface-elevated rounded-xl p-2.5 text-center">
                   <p className={cn("text-sm font-bold tabular-nums", color)}>{formatGrams(value)}</p>
@@ -159,18 +249,6 @@ function FoodLogCard({ log, onDelete }: { log: FoodLog; onDelete: (id: string) =
                 </div>
               ))}
             </div>
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className="w-full flex items-center justify-center gap-1.5 py-2
-                         text-xs text-red-400 hover:bg-red-500/10 rounded-xl
-                         border border-red-500/20 transition-colors disabled:opacity-50"
-            >
-              {deleting
-                ? <div className="w-3 h-3 border border-red-400/50 border-t-red-400 rounded-full animate-spin" />
-                : <Trash2 className="w-3.5 h-3.5" />}
-              Delete
-            </button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -197,8 +275,12 @@ function FoodTab({ onLogged, onDelete, daily }: {
     setError(null);
     setResult(null);
     try {
-      const log = await foodApi.createLog({ raw_input: query.trim(), meal_type: mealType });
-      setResult(`${log.food_name} — ${Math.round(log.calories)} kcal logged!`);
+      const logs = await foodApi.createLog({ raw_input: query.trim(), meal_type: mealType });
+      const totalKcal = logs.reduce((s, l) => s + l.calories, 0);
+      const label = logs.length === 1
+        ? logs[0].food_name
+        : logs.map((l) => l.food_name).join(" + ");
+      setResult(`${label} — ${Math.round(totalKcal)} kcal logged!`);
       setQuery("");
       onLogged();
     } catch (err) {
@@ -208,7 +290,8 @@ function FoodTab({ onLogged, onDelete, daily }: {
     }
   }
 
-  const groups = groupByMeal(daily?.logs ?? []);
+  const mealGroups = buildMealGroups(daily?.logs ?? []);
+  const groups = groupByMeal(mealGroups);
   const orderedMeals = MEAL_ORDER.filter((m) => groups[m]?.length);
 
   return (
@@ -305,12 +388,12 @@ function FoodTab({ onLogged, onDelete, daily }: {
                   {formatMealType(mealType)}
                 </p>
                 <p className="text-xs text-text-muted tabular-nums">
-                  {formatCalories(groups[mealType].reduce((s, l) => s + l.calories, 0))} kcal
+                  {formatCalories(groups[mealType].reduce((s, g) => s + g.total_calories, 0))} kcal
                 </p>
               </div>
               <AnimatePresence>
-                {groups[mealType].map((log) => (
-                  <FoodLogCard key={log.id} log={log} onDelete={onDelete} />
+                {groups[mealType].map((group) => (
+                  <MealGroupCard key={group.id} group={group} onDelete={onDelete} />
                 ))}
               </AnimatePresence>
             </div>
@@ -322,38 +405,271 @@ function FoodTab({ onLogged, onDelete, daily }: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WORKOUT TAB
+// WORKOUT TAB — 3 sections: App Workout / Cardio / Strength
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface ExRow {
-  id: string;
-  name: string;
-  sets: string;
-  reps: string;
+const WORKOUT_SECTIONS: { value: WorkoutSection; label: string; icon: React.ReactNode }[] = [
+  { value: "app_workout", label: "App Workout", icon: <Smartphone className="w-3.5 h-3.5" /> },
+  { value: "cardio",      label: "Cardio",      icon: <Bike className="w-3.5 h-3.5" /> },
+  { value: "strength",    label: "Strength",    icon: <Dumbbell className="w-3.5 h-3.5" /> },
+];
+
+// ── Rest day toggle ────────────────────────────────────────────────────────────
+
+function RestDayToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-medium transition-all",
+        checked
+          ? "bg-slate-500/20 text-slate-300 border-slate-500/40"
+          : "bg-surface-elevated text-text-muted border-border"
+      )}
+    >
+      <BedDouble className="w-3.5 h-3.5" />
+      Rest day
+    </button>
+  );
 }
 
-function newRow(id: string): ExRow {
-  return { id, name: "", sets: "", reps: "" };
+// ── Input helpers ──────────────────────────────────────────────────────────────
+
+function FieldInput({
+  value, onChange, placeholder, type = "text", className = "",
+}: {
+  value: string; onChange: (v: string) => void;
+  placeholder: string; type?: string; className?: string;
+}) {
+  return (
+    <input
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className={cn(
+        "bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary",
+        "placeholder:text-text-muted focus:outline-none focus:border-blue-500/50 transition-all",
+        className,
+      )}
+    />
+  );
 }
+
+// ── Section: App Workout ───────────────────────────────────────────────────────
+
+function AppWorkoutSection({
+  onLogged, recentWorkouts,
+}: { onLogged: () => void; recentWorkouts: WorkoutLog[] }) {
+  const [calories, setCalories] = useState("");
+  const [isRest, setIsRest] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function handleLog(e: React.FormEvent) {
+    e.preventDefault();
+    if (!isRest && !calories.trim()) return;
+    setLoading(true);
+    setSuccess(null);
+    try {
+      const w = await workoutApi.createSectionedLog({
+        section: isRest ? "rest_day" : "app_workout",
+        is_rest_day: isRest,
+        calories_from_app: isRest ? undefined : parseFloat(calories) || 0,
+      });
+      setSuccess(isRest ? "Rest day logged!" : `${Math.round(w.calories_burned ?? 0)} kcal logged!`);
+      setCalories("");
+      setIsRest(false);
+      onLogged();
+    } catch {
+      /* silent */
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleLog} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[13px] text-text-secondary">Calories shown in your app / watch</p>
+        <RestDayToggle checked={isRest} onChange={setIsRest} />
+      </div>
+
+      {!isRest && (
+        <div className="flex items-center gap-3 bg-surface-elevated border border-border rounded-xl p-3.5">
+          <Flame className="w-5 h-5 text-amber-400 shrink-0" />
+          <input
+            type="number"
+            value={calories}
+            onChange={(e) => setCalories(e.target.value)}
+            placeholder="450"
+            min={0}
+            className="flex-1 bg-transparent text-[22px] font-bold text-text-primary
+                       placeholder:text-text-muted focus:outline-none"
+          />
+          <p className="text-xs text-text-muted shrink-0">kcal</p>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {success && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="flex items-center gap-2 bg-emerald-500/10 rounded-xl px-3 py-2.5">
+            <Check className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2.5} />
+            <p className="text-sm text-emerald-400">{success}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <button type="submit" disabled={loading || (!isRest && !calories.trim())}
+        className="w-full py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold
+                   hover:bg-blue-600 transition-colors disabled:opacity-40
+                   flex items-center justify-center gap-2">
+        {loading
+          ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          : <Flame className="w-4 h-4" />}
+        {loading ? "Logging…" : isRest ? "Log Rest Day" : "Log Workout"}
+      </button>
+    </form>
+  );
+}
+
+// ── Section: Cardio ────────────────────────────────────────────────────────────
+
+interface CardioRow { id: string; activity: string; duration: string; calories: string; }
+function newCardioRow(id: string): CardioRow { return { id, activity: "", duration: "", calories: "" }; }
+
+function CardioSection({ onLogged }: { onLogged: () => void }) {
+  const [rows, setRows] = useState<CardioRow[]>([newCardioRow("0")]);
+  const [nextId, setNextId] = useState(1);
+  const [isRest, setIsRest] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  function addRow() { setRows((r) => [...r, newCardioRow(String(nextId))]); setNextId((n) => n + 1); }
+  function removeRow(id: string) { if (rows.length > 1) setRows((r) => r.filter((row) => row.id !== id)); }
+  function update(id: string, field: keyof Omit<CardioRow, "id">, val: string) {
+    setRows((r) => r.map((row) => row.id === id ? { ...row, [field]: val } : row));
+  }
+
+  async function handleLog(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setSuccess(null);
+    try {
+      if (isRest) {
+        await workoutApi.createSectionedLog({ section: "rest_day", is_rest_day: true });
+        setSuccess("Rest day logged!");
+        onLogged();
+        return;
+      }
+      const valid = rows.filter((r) => r.activity.trim() && r.duration.trim());
+      if (!valid.length) return;
+      const activities: CardioActivityInput[] = valid.map((r) => ({
+        activity_description: r.activity.trim(),
+        duration_minutes: parseFloat(r.duration) || 0,
+        ...(r.calories.trim() ? { calories_burned: parseFloat(r.calories) } : {}),
+      }));
+      const w = await workoutApi.createSectionedLog({ section: "cardio", cardio_activities: activities });
+      const kcal = w.calories_burned != null ? ` · ${Math.round(w.calories_burned)} kcal` : " · estimating…";
+      setSuccess(`Cardio logged${kcal}`);
+      setRows([newCardioRow(String(nextId))]);
+      setNextId((n) => n + 1);
+      onLogged();
+    } catch {
+      /* silent */
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleLog} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[13px] text-text-secondary">
+          Omit calories to let AI estimate from your weight + activity.
+        </p>
+        <RestDayToggle checked={isRest} onChange={setIsRest} />
+      </div>
+
+      {!isRest && (
+        <div className="space-y-2">
+          {/* Column headers */}
+          <div className="flex gap-2 px-1">
+            <p className="flex-[5] text-[11px] text-text-muted">Activity</p>
+            <p className="w-14 text-center text-[11px] text-text-muted">Min</p>
+            <p className="w-16 text-center text-[11px] text-text-muted">kcal (opt)</p>
+            <div className="w-7" />
+          </div>
+
+          <AnimatePresence initial={false}>
+            {rows.map((row) => (
+              <motion.div key={row.id}
+                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.15 }}
+                className="flex gap-2 items-center">
+                <FieldInput value={row.activity} onChange={(v) => update(row.id, "activity", v)}
+                  placeholder="Treadmill walk, Cycling…" className="flex-[5]" />
+                <FieldInput value={row.duration} onChange={(v) => update(row.id, "duration", v)}
+                  placeholder="10" type="number" className="w-14 text-center" />
+                <FieldInput value={row.calories} onChange={(v) => update(row.id, "calories", v)}
+                  placeholder="—" type="number" className="w-16 text-center" />
+                <button type="button" onClick={() => removeRow(row.id)}
+                  className={cn("w-7 h-7 flex items-center justify-center rounded-lg transition-colors",
+                    rows.length === 1 ? "opacity-20 cursor-not-allowed" : "text-text-muted hover:text-red-400"
+                  )} disabled={rows.length === 1}>
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+
+          <button type="button" onClick={addRow}
+            className="flex items-center gap-1.5 text-blue-400 text-[13px] font-medium hover:text-blue-300 transition-colors py-1">
+            <Plus className="w-4 h-4" /> Add activity
+          </button>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {success && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="flex items-center gap-2 bg-emerald-500/10 rounded-xl px-3 py-2.5">
+            <Check className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2.5} />
+            <p className="text-sm text-emerald-400">{success}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <button type="submit"
+        disabled={loading || (!isRest && rows.every((r) => !r.activity.trim() || !r.duration.trim()))}
+        className="w-full py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold
+                   hover:bg-blue-600 transition-colors disabled:opacity-40
+                   flex items-center justify-center gap-2">
+        {loading
+          ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          : <Bike className="w-4 h-4" />}
+        {loading ? "Estimating…" : isRest ? "Log Rest Day" : "Log Cardio"}
+      </button>
+    </form>
+  );
+}
+
+// ── Section: Strength ──────────────────────────────────────────────────────────
+
+interface StrRow { id: string; name: string; sets: string; reps: string; weight: string; }
+function newStrRow(id: string): StrRow { return { id, name: "", sets: "", reps: "", weight: "" }; }
 
 function ExerciseAutocomplete({
-  value,
-  onChange,
-  history,
-  placeholder,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  history: string[];
-  placeholder: string;
-}) {
+  value, onChange, history, placeholder,
+}: { value: string; onChange: (v: string) => void; history: string[]; placeholder: string }) {
   const [open, setOpen] = useState(false);
   const suggestions = open && value.length > 0
     ? history.filter((n) => n.toLowerCase().includes(value.toLowerCase())).slice(0, 6)
     : [];
-
   return (
-    <div className="relative flex-1 min-w-0">
+    <div className="relative flex-[5] min-w-0">
       <input
         type="text"
         value={value}
@@ -361,23 +677,16 @@ function ExerciseAutocomplete({
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder={placeholder}
-        className="w-full bg-surface border border-border rounded-xl
-                   px-3 py-2.5 text-sm text-text-primary
-                   placeholder:text-text-muted
-                   focus:outline-none focus:border-blue-500/50
-                   transition-all duration-200"
+        className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary
+                   placeholder:text-text-muted focus:outline-none focus:border-blue-500/50 transition-all"
       />
       {open && suggestions.length > 0 && (
         <div className="absolute left-0 top-full mt-1 z-50 bg-surface-elevated border border-border
-                        rounded-xl overflow-hidden shadow-lg w-56">
+                        rounded-xl overflow-hidden shadow-lg w-52">
           {suggestions.map((s) => (
-            <button
-              key={s}
-              type="button"
-              onMouseDown={() => { onChange(s); setOpen(false); }}
-              className="flex items-center gap-2 w-full px-3 py-2.5 text-sm text-text-primary
-                         hover:bg-surface transition-colors text-left"
-            >
+            <button key={s} type="button" onMouseDown={() => { onChange(s); setOpen(false); }}
+              className="flex items-center gap-2 w-full px-3 py-2 text-sm text-text-primary
+                         hover:bg-surface transition-colors text-left">
               <History className="w-3.5 h-3.5 text-text-muted shrink-0" />
               {s}
             </button>
@@ -388,281 +697,180 @@ function ExerciseAutocomplete({
   );
 }
 
-function WorkoutTab({ onLogged, recentWorkouts, mutateRecent }: {
-  onLogged: () => void;
-  recentWorkouts: WorkoutLog[];
-  mutateRecent: () => void;
-}) {
-  const [workoutType, setWorkoutType] = useState<WorkoutType>("strength");
-  const [title, setTitle] = useState("");
-  const [duration, setDuration] = useState("");
-  const [calories, setCalories] = useState("");
-  const [rows, setRows] = useState<ExRow[]>([newRow("0")]);
+function StrengthSection({ onLogged, recentWorkouts }: { onLogged: () => void; recentWorkouts: WorkoutLog[] }) {
+  const [rows, setRows] = useState<StrRow[]>([newStrRow("0")]);
   const [nextId, setNextId] = useState(1);
+  const [isRest, setIsRest] = useState(false);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Exercise history from recent workouts
   const exerciseHistory: string[] = Array.from(
-    new Set(recentWorkouts.flatMap((w) => w.exercises.map((e) => e.name).filter(Boolean)))
+    new Set(recentWorkouts
+      .filter((w) => w.workout_section === "strength")
+      .flatMap((w) => w.exercises.map((e: any) => e.name as string).filter(Boolean))
+    )
   ).sort();
 
-  function addRow() {
-    setRows((r) => [...r, newRow(String(nextId))]);
-    setNextId((n) => n + 1);
-  }
-
-  function removeRow(id: string) {
-    if (rows.length === 1) return;
-    setRows((r) => r.filter((row) => row.id !== id));
-  }
-
-  function updateRow(id: string, field: keyof Omit<ExRow, "id">, val: string) {
+  function addRow() { setRows((r) => [...r, newStrRow(String(nextId))]); setNextId((n) => n + 1); }
+  function removeRow(id: string) { if (rows.length > 1) setRows((r) => r.filter((row) => row.id !== id)); }
+  function update(id: string, field: keyof Omit<StrRow, "id">, val: string) {
     setRows((r) => r.map((row) => row.id === id ? { ...row, [field]: val } : row));
   }
 
   async function handleLog(e: React.FormEvent) {
     e.preventDefault();
-    const validExercises = rows.filter((r) => r.name.trim());
-    if (validExercises.length === 0) return;
-
     setLoading(true);
     setSuccess(null);
-
-    const autoTitle = title.trim() || validExercises.map((e) => e.name.trim()).join(", ");
-    const exercises: Exercise[] = validExercises.map((r) => ({
-      name: r.name.trim(),
-      sets: r.sets ? parseInt(r.sets) : undefined,
-      reps: r.reps ? parseInt(r.reps) : undefined,
-    }));
-
     try {
-      const w = await workoutApi.createLog({
-        title: autoTitle,
-        workout_type: workoutType,
-        duration_minutes: parseInt(duration) || 30,
-        intensity: "moderate",
-        exercises,
-        ...(calories ? { calories_burned: parseFloat(calories) } : {}),
-      });
-
-      const kcalStr = w.calories_burned ? ` ${Math.round(w.calories_burned)} kcal` : "";
-      setSuccess(`${w.title} logged!${kcalStr}`);
-      setTitle("");
-      setDuration("");
-      setCalories("");
-      setRows([newRow(String(nextId))]);
+      if (isRest) {
+        await workoutApi.createSectionedLog({ section: "rest_day", is_rest_day: true });
+        setSuccess("Rest day logged!");
+        onLogged();
+        return;
+      }
+      const valid = rows.filter((r) => r.name.trim() && r.sets.trim() && r.reps.trim());
+      if (!valid.length) return;
+      const exercises: StrengthExerciseInput[] = valid.map((r) => ({
+        name: r.name.trim(),
+        sets: parseInt(r.sets) || 1,
+        reps: parseInt(r.reps) || 1,
+        weight_kg: parseFloat(r.weight) || 0,
+      }));
+      const w = await workoutApi.createSectionedLog({ section: "strength", strength_exercises: exercises });
+      const kcal = w.calories_burned != null ? ` · ${Math.round(w.calories_burned)} kcal` : "";
+      setSuccess(`${exercises.length} exercise${exercises.length !== 1 ? "s" : ""} logged${kcal}`);
+      setRows([newStrRow(String(nextId))]);
       setNextId((n) => n + 1);
       onLogged();
-      mutateRecent();
     } catch {
-      // error silently (matches mobile snackbar pattern)
+      /* silent */
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="space-y-6">
-      {/* Main card */}
-      <form onSubmit={handleLog} className="card-surface p-4 space-y-5">
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center">
-            <Dumbbell className="w-[18px] h-[18px] text-blue-400" />
-          </div>
-          <p className="text-base font-bold">Log Workout</p>
-        </div>
+    <form onSubmit={handleLog} className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-[13px] text-text-secondary">
+          AI estimates calories from your sets × reps × weight.
+        </p>
+        <RestDayToggle checked={isRest} onChange={setIsRest} />
+      </div>
 
-        {/* Workout type chips */}
-        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-          {WORKOUT_TYPES.map(({ value, label }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setWorkoutType(value)}
-              className={cn(
-                "shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-all border",
-                workoutType === value
-                  ? "bg-blue-500/20 text-blue-400 border-blue-500/40"
-                  : "bg-surface-elevated text-text-secondary border-border"
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Title + Duration row */}
-        <div className="flex gap-3">
-          <div className="flex-[3] space-y-1.5">
-            <p className="text-[13px] text-text-secondary">Session name (optional)</p>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Push day"
-              className="w-full bg-surface border border-border rounded-xl
-                         px-3 py-2.5 text-sm text-text-primary
-                         placeholder:text-text-muted
-                         focus:outline-none focus:border-blue-500/50
-                         transition-all duration-200"
-            />
-          </div>
-          <div className="flex-[2] space-y-1.5">
-            <p className="text-[13px] text-text-secondary">Duration (min)</p>
-            <input
-              type="number"
-              value={duration}
-              onChange={(e) => setDuration(e.target.value)}
-              placeholder="45"
-              min={1}
-              max={600}
-              className="w-full bg-surface border border-border rounded-xl
-                         px-3 py-2.5 text-sm text-text-primary
-                         placeholder:text-text-muted
-                         focus:outline-none focus:border-blue-500/50
-                         transition-all duration-200"
-            />
-          </div>
-        </div>
-
-        {/* Exercises */}
+      {!isRest && (
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <p className="text-[13px] text-text-secondary">Exercises</p>
-            {exerciseHistory.length > 0 && (
-              <p className="text-xs text-text-muted">{exerciseHistory.length} saved</p>
-            )}
-          </div>
-
           {/* Column headers */}
-          <div className="flex items-center gap-2 px-1">
-            <p className="flex-1 text-[11px] text-text-muted">Exercise</p>
-            <p className="w-12 text-center text-[11px] text-text-muted">Sets</p>
-            <p className="w-12 text-center text-[11px] text-text-muted">Reps</p>
-            <div className="w-8" />
+          <div className="flex gap-2 px-1">
+            <p className="flex-[5] text-[11px] text-text-muted">Exercise</p>
+            <p className="w-10 text-center text-[11px] text-text-muted">Sets</p>
+            <p className="w-10 text-center text-[11px] text-text-muted">Reps</p>
+            <p className="w-14 text-center text-[11px] text-text-muted">kg</p>
+            <div className="w-7" />
           </div>
 
-          {/* Exercise rows */}
           <AnimatePresence initial={false}>
             {rows.map((row) => (
-              <motion.div
-                key={row.id}
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-                exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.15 }}
-                className="flex items-center gap-2"
-              >
+              <motion.div key={row.id}
+                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.15 }}
+                className="flex gap-2 items-center">
                 <ExerciseAutocomplete
-                  value={row.name}
-                  onChange={(v) => updateRow(row.id, "name", v)}
-                  history={exerciseHistory}
-                  placeholder="Exercise name"
-                />
-                <input
-                  type="number"
-                  value={row.sets}
-                  onChange={(e) => updateRow(row.id, "sets", e.target.value)}
-                  placeholder="3"
-                  min={1}
-                  className="w-12 bg-surface border border-border rounded-xl
-                             px-2 py-2.5 text-sm text-center text-text-primary
-                             placeholder:text-text-muted
-                             focus:outline-none focus:border-blue-500/50
-                             transition-all duration-200"
-                />
-                <input
-                  type="number"
-                  value={row.reps}
-                  onChange={(e) => updateRow(row.id, "reps", e.target.value)}
-                  placeholder="10"
-                  min={1}
-                  className="w-12 bg-surface border border-border rounded-xl
-                             px-2 py-2.5 text-sm text-center text-text-primary
-                             placeholder:text-text-muted
-                             focus:outline-none focus:border-blue-500/50
-                             transition-all duration-200"
-                />
-                <button
-                  type="button"
-                  onClick={() => removeRow(row.id)}
-                  className={cn(
-                    "w-8 h-8 flex items-center justify-center rounded-lg transition-colors",
-                    rows.length === 1
-                      ? "opacity-20 cursor-not-allowed"
-                      : "text-text-muted hover:text-red-400"
-                  )}
-                  disabled={rows.length === 1}
-                >
-                  <X className="w-4 h-4" />
+                  value={row.name} onChange={(v) => update(row.id, "name", v)}
+                  history={exerciseHistory} placeholder="Bench Press, Squat…" />
+                <FieldInput value={row.sets} onChange={(v) => update(row.id, "sets", v)}
+                  placeholder="3" type="number" className="w-10 text-center" />
+                <FieldInput value={row.reps} onChange={(v) => update(row.id, "reps", v)}
+                  placeholder="10" type="number" className="w-10 text-center" />
+                <FieldInput value={row.weight} onChange={(v) => update(row.id, "weight", v)}
+                  placeholder="0" type="number" className="w-14 text-center" />
+                <button type="button" onClick={() => removeRow(row.id)}
+                  className={cn("w-7 h-7 flex items-center justify-center rounded-lg transition-colors",
+                    rows.length === 1 ? "opacity-20 cursor-not-allowed" : "text-text-muted hover:text-red-400"
+                  )} disabled={rows.length === 1}>
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </motion.div>
             ))}
           </AnimatePresence>
 
-          {/* Add exercise */}
-          <button
-            type="button"
-            onClick={addRow}
-            className="flex items-center gap-1.5 text-blue-400 text-[13px] font-medium
-                       hover:text-blue-300 transition-colors py-1"
-          >
-            <Plus className="w-4 h-4" />
-            Add exercise
+          <button type="button" onClick={addRow}
+            className="flex items-center gap-1.5 text-blue-400 text-[13px] font-medium hover:text-blue-300 transition-colors py-1">
+            <Plus className="w-4 h-4" /> Add exercise
           </button>
         </div>
+      )}
 
-        {/* Calories burned card */}
-        <div className="flex items-center gap-3 bg-surface-elevated border border-border rounded-xl p-3.5">
-          <Flame className="w-5 h-5 text-amber-400 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-text-secondary mb-1">Calories burned</p>
-            <input
-              type="number"
-              value={calories}
-              onChange={(e) => setCalories(e.target.value)}
-              placeholder="450"
-              min={0}
-              className="w-full bg-transparent text-[22px] font-bold text-text-primary
-                         placeholder:text-text-muted focus:outline-none"
-            />
-          </div>
-          <p className="text-[11px] text-text-muted text-right leading-tight shrink-0">
-            from<br />your app
-          </p>
+      <AnimatePresence>
+        {success && (
+          <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="flex items-center gap-2 bg-emerald-500/10 rounded-xl px-3 py-2.5">
+            <Check className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2.5} />
+            <p className="text-sm text-emerald-400">{success}</p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <button type="submit"
+        disabled={loading || (!isRest && rows.every((r) => !r.name.trim()))}
+        className="w-full py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold
+                   hover:bg-blue-600 transition-colors disabled:opacity-40
+                   flex items-center justify-center gap-2">
+        {loading
+          ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          : <Dumbbell className="w-4 h-4" />}
+        {loading ? "Estimating…" : isRest ? "Log Rest Day" : "Log Strength"}
+      </button>
+    </form>
+  );
+}
+
+// ── WorkoutTab orchestrator ────────────────────────────────────────────────────
+
+function WorkoutTab({ onLogged, recentWorkouts, mutateRecent }: {
+  onLogged: () => void;
+  recentWorkouts: WorkoutLog[];
+  mutateRecent: () => void;
+}) {
+  const [activeSection, setActiveSection] = useState<WorkoutSection>("app_workout");
+
+  return (
+    <div className="space-y-6">
+      {/* Section selector */}
+      <div className="card-surface p-4 space-y-5">
+        {/* Section tabs */}
+        <div className="flex gap-2">
+          {WORKOUT_SECTIONS.map(({ value, label, icon }) => (
+            <button key={value} type="button" onClick={() => setActiveSection(value)}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium transition-all border",
+                activeSection === value
+                  ? "bg-blue-500/20 text-blue-400 border-blue-500/40"
+                  : "bg-surface-elevated text-text-secondary border-border"
+              )}>
+              {icon}
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
 
-        {/* Success banner */}
-        <AnimatePresence>
-          {success && (
-            <motion.div
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="flex items-center gap-2 bg-emerald-500/10 rounded-xl px-3 py-2.5"
-            >
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" strokeWidth={2.5} />
-              <p className="text-sm text-emerald-400">{success}</p>
-            </motion.div>
-          )}
+        {/* Active section form */}
+        <AnimatePresence mode="wait">
+          <motion.div key={activeSection}
+            initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.15 }}>
+            {activeSection === "app_workout" && (
+              <AppWorkoutSection onLogged={() => { onLogged(); mutateRecent(); }} recentWorkouts={recentWorkouts} />
+            )}
+            {activeSection === "cardio" && (
+              <CardioSection onLogged={() => { onLogged(); mutateRecent(); }} />
+            )}
+            {activeSection === "strength" && (
+              <StrengthSection onLogged={() => { onLogged(); mutateRecent(); }} recentWorkouts={recentWorkouts} />
+            )}
+          </motion.div>
         </AnimatePresence>
-
-        {/* Log button */}
-        <button
-          type="submit"
-          disabled={loading || rows.every((r) => !r.name.trim())}
-          className="w-full py-3 rounded-xl bg-blue-500 text-white text-sm font-semibold
-                     hover:bg-blue-600 transition-colors disabled:opacity-40
-                     flex items-center justify-center gap-2"
-        >
-          {loading
-            ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            : <Dumbbell className="w-4 h-4" />}
-          {loading ? "Logging…" : "Log Workout"}
-        </button>
-      </form>
+      </div>
 
       {/* Recent workouts */}
       <div>
@@ -671,32 +879,39 @@ function WorkoutTab({ onLogged, recentWorkouts, mutateRecent }: {
           <p className="text-center text-text-muted py-8 text-sm">No workouts yet.</p>
         ) : (
           <div className="space-y-2">
-            {recentWorkouts.map((log, i) => (
-              <motion.div
-                key={log.id}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-                className="card-surface flex items-center gap-3 px-4 py-3.5"
-              >
-                <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
-                  <Dumbbell className="w-5 h-5 text-blue-400" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-text-primary truncate">{log.title}</p>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    {WORKOUT_TYPES.find((t) => t.value === log.workout_type)?.label ?? log.workout_type}
-                    {" · "}{log.duration_minutes} min
-                    {log.exercises.length > 0 && ` · ${log.exercises.length} exercise${log.exercises.length !== 1 ? "s" : ""}`}
-                  </p>
-                </div>
-                {log.calories_burned != null && (
-                  <p className="text-sm font-semibold text-amber-400 tabular-nums shrink-0">
-                    {Math.round(log.calories_burned)} kcal
-                  </p>
-                )}
-              </motion.div>
-            ))}
+            {recentWorkouts.map((log, i) => {
+              const sectionIcon =
+                log.workout_section === "cardio" ? <Bike className="w-5 h-5 text-blue-400" />
+                : log.workout_section === "strength" ? <Dumbbell className="w-5 h-5 text-blue-400" />
+                : log.is_rest_day ? <BedDouble className="w-5 h-5 text-slate-400" />
+                : <Smartphone className="w-5 h-5 text-blue-400" />;
+              return (
+                <motion.div key={log.id}
+                  initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.04 }}
+                  className="card-surface flex items-center gap-3 px-4 py-3.5">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0">
+                    {sectionIcon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-text-primary truncate">{log.title}</p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      {log.is_rest_day ? "Rest day"
+                        : `${log.workout_section === "cardio" ? "Cardio"
+                            : log.workout_section === "strength" ? "Strength"
+                            : "App"} · ${log.duration_minutes > 0 ? `${log.duration_minutes} min` : ""}`
+                      }
+                      {log.exercises.length > 0 && !log.is_rest_day && ` · ${log.exercises.length} item${log.exercises.length !== 1 ? "s" : ""}`}
+                    </p>
+                  </div>
+                  {log.calories_burned != null && log.calories_burned > 0 && (
+                    <p className="text-sm font-semibold text-amber-400 tabular-nums shrink-0">
+                      {Math.round(log.calories_burned)} kcal
+                    </p>
+                  )}
+                </motion.div>
+              );
+            })}
           </div>
         )}
       </div>

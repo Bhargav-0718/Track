@@ -153,7 +153,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 28),
 
               // ── Body stats ───────────────────────────────────────────────
-              _SectionHeader('Body Stats'),
+              const _SectionHeader('Body Stats'),
               const SizedBox(height: 10),
               Row(
                 children: [
@@ -191,7 +191,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 24),
 
               // ── Goal ─────────────────────────────────────────────────────
-              _SectionHeader('Goal'),
+              const _SectionHeader('Goal'),
               const SizedBox(height: 10),
               GridView.count(
                 shrinkWrap: true,
@@ -236,7 +236,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 24),
 
               // ── Activity level ───────────────────────────────────────────
-              _SectionHeader('Activity Level'),
+              const _SectionHeader('Activity Level'),
               const SizedBox(height: 10),
               ...ActivityLevel.values.map((a) {
                 final sel = a == _activity;
@@ -277,7 +277,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 24),
 
               // ── Gender (for BMR accuracy) ────────────────────────────────
-              _SectionHeader('Gender'),
+              const _SectionHeader('Gender'),
               const SizedBox(height: 10),
               Row(
                 children: ['male', 'female', 'other'].map((g) {
@@ -311,7 +311,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               const SizedBox(height: 24),
 
               // ── Nutrition targets ────────────────────────────────────────
-              _SectionHeader('Nutrition Targets'),
+              const _SectionHeader('Nutrition Targets'),
               const SizedBox(height: 10),
               Row(
                 children: [
@@ -388,9 +388,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               bottom: 0, left: 0, right: 0,
               child: Container(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   color: AppColors.surface,
-                  border: const Border(top: BorderSide(color: AppColors.border)),
+                  border: Border(top: BorderSide(color: AppColors.border)),
                 ),
                 child: ElevatedButton(
                   onPressed: _saving ? null : _save,

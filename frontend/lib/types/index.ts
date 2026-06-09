@@ -81,6 +81,9 @@ export interface FoodLog {
   is_corrected: boolean;
   logged_at: string;
   created_at: string;
+  meal_group_id: string | null;
+  quantity: number;
+  calories_per_unit: number | null;
 }
 
 export interface FoodLogCreate {
@@ -119,6 +122,7 @@ export interface PaginatedResponse<T> {
 
 export type WorkoutType = "strength" | "cardio" | "hiit" | "yoga" | "sports" | "other";
 export type Intensity = "low" | "moderate" | "high" | "very_high";
+export type WorkoutSection = "app_workout" | "cardio" | "strength" | "rest_day";
 
 export interface Exercise {
   name: string;
@@ -133,10 +137,12 @@ export interface WorkoutLog {
   user_id: string;
   title: string;
   workout_type: WorkoutType;
+  workout_section: WorkoutSection;
+  is_rest_day: boolean;
   duration_minutes: number;
   intensity: Intensity;
   calories_burned: number | null;
-  exercises: Exercise[];
+  exercises: Record<string, unknown>[];
   notes: string | null;
   logged_at: string;
 }
@@ -147,6 +153,31 @@ export interface WorkoutLogCreate {
   duration_minutes: number;
   intensity: Intensity;
   exercises?: Exercise[];
+  notes?: string;
+  logged_at?: string;
+}
+
+// ── Sectioned workout (3-section UI) ─────────────────────────────────────────
+
+export interface CardioActivityInput {
+  activity_description: string;
+  duration_minutes: number;
+  calories_burned?: number;
+}
+
+export interface StrengthExerciseInput {
+  name: string;
+  sets: number;
+  reps: number;
+  weight_kg: number;
+}
+
+export interface SectionedWorkoutCreate {
+  section: WorkoutSection;
+  is_rest_day?: boolean;
+  calories_from_app?: number;
+  cardio_activities?: CardioActivityInput[];
+  strength_exercises?: StrengthExerciseInput[];
   notes?: string;
   logged_at?: string;
 }

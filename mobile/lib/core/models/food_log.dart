@@ -19,6 +19,10 @@ class FoodLog {
   final bool isCorrected;
   final DateTime loggedAt;
   final DateTime createdAt;
+  // Compound meal fields
+  final String? mealGroupId;
+  final double quantity;
+  final double? caloriesPerUnit;
 
   const FoodLog({
     required this.id,
@@ -41,6 +45,9 @@ class FoodLog {
     required this.isCorrected,
     required this.loggedAt,
     required this.createdAt,
+    this.mealGroupId,
+    this.quantity = 1.0,
+    this.caloriesPerUnit,
   });
 
   factory FoodLog.fromJson(Map<String, dynamic> json) => FoodLog(
@@ -64,6 +71,9 @@ class FoodLog {
         isCorrected: json['is_corrected'] as bool,
         loggedAt: DateTime.parse(json['logged_at'] as String),
         createdAt: DateTime.parse(json['created_at'] as String),
+        mealGroupId: json['meal_group_id'] as String?,
+        quantity: (json['quantity'] as num?)?.toDouble() ?? 1.0,
+        caloriesPerUnit: (json['calories_per_unit'] as num?)?.toDouble(),
       );
 }
 

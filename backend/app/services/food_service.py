@@ -3,7 +3,7 @@ FoodService — business logic for food logging.
 """
 from datetime import date, datetime
 from datetime import timezone as dt_timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.core.exceptions import ResourceNotFoundError
 from app.core.logging import get_logger
@@ -35,36 +35,40 @@ class FoodService:
         self,
         user_id: UUID,
         data: FoodLogCreate,
-    ) -> FoodLogResponse:
-        """Create a food log entry (quick or manual)."""
+    ) -> list[FoodLogResponse]:
+        """Create food log entries. Returns a list — one item for simple foods,
+        multiple items for compound meals (each component is a separate FoodLog
+        sharing a meal_group_id)."""
         if data.is_quick_log:
-            log = await self._create_quick_log(user_id, data)
+            logs = await self._create_quick_log(user_id, data)
         else:
-            log = await self._create_manual_log(user_id, data)
+            logs = [await self._create_manual_log(user_id, data)]
 
-        await self._update_memory(user_id, log, is_correction=False)
-        await self._refresh_daily_summary(user_id, log.logged_at.date())
+        for log in logs:
+            await self._update_memory(user_id, log, is_correction=False)
+
+        await self._refresh_daily_summary(user_id, logs[0].logged_at.date())
 
         logger.info(
             "food_logged",
             user_id=str(user_id),
-            food=log.food_name,
-            calories=log.calories,
-            source=log.estimation_source,
+            food=" + ".join(l.food_name for l in logs),
+            calories=sum(l.calories for l in logs),
+            count=len(logs),
         )
 
-        return FoodLogResponse.model_validate(log)
+        return [FoodLogResponse.model_validate(log) for log in logs]
 
-    async def _create_quick_log(self, user_id: UUID, data: FoodLogCreate) -> FoodLog:
+    async def _create_quick_log(self, user_id: UUID, data: FoodLogCreate) -> list[FoodLog]:
         try:
             estimator = EstimationService()
-            result: EstimationResult = await estimator.estimate(
+            results: list[EstimationResult] = await estimator.estimate(
                 raw_input=data.raw_input or "",
                 user_id=user_id,
             )
         except Exception as e:
             logger.warning("estimation_pipeline_failed", error=str(e), raw=data.raw_input)
-            return await self.food_repo.create_food_log(
+            fallback = await self.food_repo.create_food_log(
                 user_id=user_id,
                 food_name=data.raw_input or "Unknown",
                 calories=0.0,
@@ -76,29 +80,42 @@ class FoodService:
                 assumptions=["Estimation failed — please edit to add nutrition values"],
                 logged_at=data.logged_at or datetime.now(dt_timezone.utc),
             )
+            return [fallback]
 
-        return await self.food_repo.create_food_log(
-            user_id=user_id,
-            food_name=result.food_name,
-            calories=result.calories,
-            raw_input=data.raw_input,
-            meal_type=data.meal_type,
-            portion_description=result.portion_description,
-            portion_grams=result.portion_grams,
-            protein_g=result.protein_g,
-            carbs_g=result.carbs_g,
-            fat_g=result.fat_g,
-            fiber_g=result.fiber_g,
-            estimation_source=result.estimation_source,
-            confidence_score=result.confidence_score,
-            confidence_level=result.confidence_level,
-            assumptions=result.assumptions,
-            logged_at=data.logged_at or datetime.now(dt_timezone.utc),
-            nutrition_cache_id=result.nutrition_cache_id,
-            memory_id=result.memory_id,
-        )
+        # Compound meals get a shared group ID so the UI can cluster them
+        meal_group_id = uuid4() if len(results) > 1 else None
+        logged_at = data.logged_at or datetime.now(dt_timezone.utc)
 
-    async def _create_manual_log(self, user_id: UUID, data: FoodLogCreate) -> FoodLog:
+        logs: list[FoodLog] = []
+        for result in results:
+            log = await self.food_repo.create_food_log(
+                user_id=user_id,
+                food_name=result.food_name,
+                calories=result.calories,
+                raw_input=data.raw_input,
+                meal_type=data.meal_type,
+                portion_description=result.portion_description,
+                portion_grams=result.portion_grams,
+                protein_g=result.protein_g,
+                carbs_g=result.carbs_g,
+                fat_g=result.fat_g,
+                fiber_g=result.fiber_g,
+                estimation_source=result.estimation_source,
+                confidence_score=result.confidence_score,
+                confidence_level=result.confidence_level,
+                assumptions=result.assumptions,
+                logged_at=logged_at,
+                nutrition_cache_id=result.nutrition_cache_id,
+                memory_id=result.memory_id,
+                meal_group_id=meal_group_id,
+                quantity=result.quantity,
+                calories_per_unit=result.calories_per_unit,
+            )
+            logs.append(log)
+
+        return logs
+
+    async def _create_manual_log(self, user_id: UUID, data: FoodLogCreate) -> FoodLog:  # noqa: D102
         return await self.food_repo.create_food_log(
             user_id=user_id,
             food_name=data.food_name or "Unknown Food",

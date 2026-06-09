@@ -31,13 +31,19 @@ class WorkoutLog(BaseDocument):
     # Valid: low | moderate | high | very_high
     intensity: str = "moderate"
 
+    # ── Section (UI-driven) ───────────────────────────────────────────────────
+    # Valid: app_workout | cardio | strength | rest_day
+    workout_section: str = "app_workout"
+    is_rest_day: bool = False
+
     # ── Calories Out ──────────────────────────────────────────────────────────
     calories_burned: float | None = None
-    # Source: health_connect | formula | manual
+    # Source: health_connect | formula | manual | llm | cache
     calories_source: str = "manual"
 
-    # ── Exercise Details (Strength Training) ──────────────────────────────────
-    # [{name, sets, reps, weight_kg, duration_seconds}]
+    # ── Exercise Details (Cardio + Strength) ──────────────────────────────────
+    # Cardio:   [{type:"cardio", activity_description, duration_minutes, calories_burned, met_value, calories_source}]
+    # Strength: [{type:"strength", name, sets, reps, weight_kg, calories_burned, calories_per_volume_unit, calories_source}]
     exercises: list = []
 
     # ── Additional Context ────────────────────────────────────────────────────

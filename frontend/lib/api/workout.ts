@@ -1,11 +1,14 @@
 import { api } from "./client";
-import type { WorkoutLog, WorkoutLogCreate, PaginatedResponse } from "../types";
+import type { WorkoutLog, WorkoutLogCreate, SectionedWorkoutCreate, PaginatedResponse } from "../types";
 
 const PREFIX = "/api/v1/workout-logs";
 
 export const workoutApi = {
   createLog: (data: WorkoutLogCreate) =>
     api.post<WorkoutLog>(PREFIX + "/", data),
+
+  createSectionedLog: (data: SectionedWorkoutCreate) =>
+    api.post<WorkoutLog>(PREFIX + "/log/", data),
 
   listLogs: (params?: {
     page?: number;

@@ -23,6 +23,7 @@ from app.schemas.daily_summary import (
     HealthConnectSyncResponse,
 )
 from app.schemas.workout_log import (
+    SectionedWorkoutCreate,
     WorkoutLogCreate,
     WorkoutLogResponse,
     WorkoutLogSummary,
@@ -56,6 +57,41 @@ async def create_workout_log(
     """
     service = WorkoutService()
     return await service.create_log(
+        current_user.id,
+        data,
+        user_weight_kg=current_user.weight_kg,
+    )
+
+
+@router.post(
+    "/workout-logs/log/",
+    response_model=WorkoutLogResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Log a workout (3-section UI)",
+)
+async def create_sectioned_workout_log(
+    data: SectionedWorkoutCreate,
+    current_user: CurrentUser,
+) -> WorkoutLogResponse:
+    """
+    Log a workout using the 3-section format.
+
+    **section = 'app_workout'**: Provide `calories_from_app` — calories shown by
+    your fitness app/watch. No exercise detail needed.
+
+    **section = 'cardio'**: Provide `cardio_activities` list. Each activity needs
+    `activity_description` and `duration_minutes`. Omit `calories_burned` to
+    let the LLM estimate using your weight and a MET cache.
+
+    **section = 'strength'**: Provide `strength_exercises` list. Each entry needs
+    `name`, `sets`, `reps`, `weight_kg`. Calories are estimated via LLM and
+    cached — future logs scale the cached rate proportionally.
+
+    **section = 'rest_day'** (or `is_rest_day = true` on any section): Logs
+    a rest day with 0 calories and skips estimation.
+    """
+    service = WorkoutService()
+    return await service.create_sectioned_log(
         current_user.id,
         data,
         user_weight_kg=current_user.weight_kg,

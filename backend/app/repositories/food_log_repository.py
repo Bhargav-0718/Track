@@ -120,6 +120,9 @@ class FoodLogRepository(BaseRepository[FoodLog]):
         logged_at: datetime | None = None,
         nutrition_cache_id: UUID | None = None,
         memory_id: UUID | None = None,
+        meal_group_id: UUID | None = None,
+        quantity: float = 1.0,
+        calories_per_unit: float | None = None,
     ) -> FoodLog:
         """Create a new food log document."""
         log = FoodLog(
@@ -142,6 +145,9 @@ class FoodLogRepository(BaseRepository[FoodLog]):
             logged_at=logged_at or datetime.now(dt_timezone.utc),
             nutrition_cache_id=nutrition_cache_id,
             memory_id=memory_id,
+            meal_group_id=meal_group_id,
+            quantity=quantity,
+            calories_per_unit=calories_per_unit,
         )
         await log.insert()
         return log

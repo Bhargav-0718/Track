@@ -20,13 +20,13 @@ class TodayFoodNotifier extends StateNotifier<AsyncValue<DailyFoodSummary>> {
     }
   }
 
-  Future<FoodLog> estimateAndLog({
+  Future<List<FoodLog>> estimateAndLog({
     required String rawInput,
     required MealType mealType,
   }) async {
-    final log = await FoodApi.estimateAndLog(rawInput: rawInput, mealType: mealType);
+    final logs = await FoodApi.estimateAndLog(rawInput: rawInput, mealType: mealType);
     await load(); // refresh totals
-    return log;
+    return logs;
   }
 
   Future<FoodLog> manualLog({

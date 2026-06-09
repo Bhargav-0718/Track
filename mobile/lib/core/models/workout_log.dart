@@ -3,6 +3,8 @@ class WorkoutLog {
   final String userId;
   final String title;
   final WorkoutType workoutType;
+  final String workoutSection; // app_workout | cardio | strength | rest_day
+  final bool isRestDay;
   final int durationMinutes;
   final Intensity intensity;
   final double? caloriesBurned;
@@ -15,6 +17,8 @@ class WorkoutLog {
     required this.userId,
     required this.title,
     required this.workoutType,
+    this.workoutSection = 'app_workout',
+    this.isRestDay = false,
     required this.durationMinutes,
     required this.intensity,
     this.caloriesBurned,
@@ -28,6 +32,8 @@ class WorkoutLog {
         userId: json['user_id'] as String,
         title: json['title'] as String,
         workoutType: WorkoutType.fromString(json['workout_type'] as String),
+        workoutSection: json['workout_section'] as String? ?? 'app_workout',
+        isRestDay: json['is_rest_day'] as bool? ?? false,
         durationMinutes: json['duration_minutes'] as int,
         intensity: Intensity.fromString(json['intensity'] as String),
         caloriesBurned: (json['calories_burned'] as num?)?.toDouble(),

@@ -133,7 +133,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('New here? ', style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
+                    const Text('New here? ', style: TextStyle(color: AppColors.textMuted, fontSize: 14)),
                     TextButton(
                       onPressed: () => context.go('/register'),
                       style: TextButton.styleFrom(

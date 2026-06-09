@@ -11,6 +11,7 @@ from app.models.workout_log import WorkoutLog
 from app.repositories.daily_summary_repository import DailySummaryRepository
 from app.repositories.workout_log_repository import WorkoutLogRepository
 from app.schemas.workout_log import (
+    SectionedWorkoutCreate,
     WorkoutLogCreate,
     WorkoutLogResponse,
     WorkoutLogSummary,
@@ -197,6 +198,147 @@ class WorkoutService:
             date_to=date_to,
         )
         return [WorkoutLogSummary.model_validate(log) for log in logs], total
+
+    async def create_sectioned_log(
+        self,
+        user_id: UUID,
+        data: SectionedWorkoutCreate,
+        *,
+        user_weight_kg: float | None = None,
+    ) -> WorkoutLogResponse:
+        """Create a workout log from the 3-section UI (app_workout / cardio / strength / rest_day)."""
+        from app.services.workout_estimation_service import WorkoutEstimationService
+
+        weight = user_weight_kg or DEFAULT_WEIGHT_KG
+        estimator = WorkoutEstimationService()
+        logged_at = data.logged_at or datetime.now(dt_timezone.utc)
+
+        # ── Rest day ──────────────────────────────────────────────────────────
+        if data.section == "rest_day" or data.is_rest_day:
+            log = await self.workout_repo.create_workout_log(
+                user_id=user_id,
+                title="Rest Day",
+                workout_type="other",
+                duration_minutes=0,
+                intensity="low",
+                calories_burned=0.0,
+                calories_source="manual",
+                exercises=[],
+                notes=data.notes,
+                logged_at=logged_at,
+                workout_section="rest_day",
+                is_rest_day=True,
+            )
+            await self._refresh_daily_summary(user_id, log.logged_at.date())
+            return WorkoutLogResponse.model_validate(log)
+
+        # ── App workout ───────────────────────────────────────────────────────
+        if data.section == "app_workout":
+            log = await self.workout_repo.create_workout_log(
+                user_id=user_id,
+                title="App Workout",
+                workout_type="other",
+                duration_minutes=0,
+                intensity="moderate",
+                calories_burned=data.calories_from_app or 0.0,
+                calories_source="manual",
+                exercises=[],
+                notes=data.notes,
+                logged_at=logged_at,
+                workout_section="app_workout",
+            )
+            await self._refresh_daily_summary(user_id, log.logged_at.date())
+            return WorkoutLogResponse.model_validate(log)
+
+        # ── Cardio ────────────────────────────────────────────────────────────
+        if data.section == "cardio":
+            exercise_records = []
+            total_calories = 0.0
+            total_duration = 0.0
+
+            for activity in data.cardio_activities:
+                result = await estimator.estimate_cardio(
+                    activity_description=activity.activity_description,
+                    duration_minutes=activity.duration_minutes,
+                    provided_calories=activity.calories_burned,
+                    user_weight_kg=weight,
+                )
+                exercise_records.append({
+                    "type": "cardio",
+                    "activity_description": result.activity_description,
+                    "canonical_name": result.canonical_name,
+                    "duration_minutes": result.duration_minutes,
+                    "calories_burned": result.calories_burned,
+                    "met_value": result.met_value,
+                    "calories_source": result.calories_source,
+                    "assumptions": result.assumptions,
+                })
+                total_calories += result.calories_burned
+                total_duration += result.duration_minutes
+
+            title = ", ".join(r["canonical_name"] for r in exercise_records) or "Cardio"
+            log = await self.workout_repo.create_workout_log(
+                user_id=user_id,
+                title=title,
+                workout_type="cardio",
+                duration_minutes=max(1, round(total_duration)),
+                intensity="moderate",
+                calories_burned=round(total_calories, 1),
+                calories_source="llm",
+                exercises=exercise_records,
+                notes=data.notes,
+                logged_at=logged_at,
+                workout_section="cardio",
+            )
+            await self._refresh_daily_summary(user_id, log.logged_at.date())
+            logger.info("cardio_logged", user_id=str(user_id), activities=len(exercise_records), calories=total_calories)
+            return WorkoutLogResponse.model_validate(log)
+
+        # ── Strength ──────────────────────────────────────────────────────────
+        if data.section == "strength":
+            exercise_records = []
+            total_calories = 0.0
+
+            for ex in data.strength_exercises:
+                result = await estimator.estimate_strength(
+                    exercise_name=ex.name,
+                    sets=ex.sets,
+                    reps=ex.reps,
+                    weight_kg=ex.weight_kg,
+                    user_weight_kg=weight,
+                )
+                exercise_records.append({
+                    "type": "strength",
+                    "name": result.canonical_name,
+                    "sets": result.sets,
+                    "reps": result.reps,
+                    "weight_kg": result.weight_kg,
+                    "calories_burned": result.calories_burned,
+                    "calories_per_volume_unit": result.calories_per_volume_unit,
+                    "calories_source": result.calories_source,
+                    "assumptions": result.assumptions,
+                })
+                total_calories += result.calories_burned
+
+            title = ", ".join(r["name"] for r in exercise_records) or "Strength Training"
+            log = await self.workout_repo.create_workout_log(
+                user_id=user_id,
+                title=title,
+                workout_type="strength",
+                duration_minutes=max(1, len(exercise_records) * 10),  # rough estimate
+                intensity="moderate",
+                calories_burned=round(total_calories, 1),
+                calories_source="llm",
+                exercises=exercise_records,
+                notes=data.notes,
+                logged_at=logged_at,
+                workout_section="strength",
+            )
+            await self._refresh_daily_summary(user_id, log.logged_at.date())
+            logger.info("strength_logged", user_id=str(user_id), exercises=len(exercise_records), calories=total_calories)
+            return WorkoutLogResponse.model_validate(log)
+
+        raise ValueError(f"Unknown workout section: {data.section!r}")
 
     async def _refresh_daily_summary(self, user_id: UUID, target_date: date) -> None:
         totals = await self.workout_repo.get_daily_calories_burned(user_id, target_date)
