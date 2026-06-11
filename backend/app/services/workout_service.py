@@ -310,6 +310,7 @@ class WorkoutService:
                     "sets": result.sets,
                     "reps": result.reps,
                     "weight_kg": result.weight_kg,
+                    "set_details": [s.model_dump() for s in ex.set_details],
                     "calories_burned": result.calories_burned,
                     "calories_per_volume_unit": result.calories_per_volume_unit,
                     "calories_source": result.calories_source,

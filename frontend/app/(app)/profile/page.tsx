@@ -29,7 +29,7 @@ import useSWR, { mutate } from "swr";
 import { authApi } from "@/lib/api/auth";
 import { useAuthStore } from "@/lib/store/auth";
 import { formatKg, formatCalories, GOAL_LABELS, cn } from "@/lib/utils/format";
-import type { ReportStyle } from "@/lib/types";
+import type { ReportStyle, UserPreferences } from "@/lib/types";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -170,9 +170,16 @@ export default function ProfilePage() {
   const [targetCarbs, setTargetCarbs] = useState(user?.target_carbs_g?.toString() ?? "");
   const [targetFat, setTargetFat] = useState(user?.target_fat_g?.toString() ?? "");
 
-  // ── AI preferences (local, sent on report generation) ─────────────────────
-  const [reportStyle, setReportStyle] = useState<ReportStyle>("motivational");
-  const [reportEnabled, setReportEnabled] = useState(true);
+  // ── AI preferences (persisted via /users/me/preferences) ──────────────────
+  const { data: preferences } = useSWR("preferences", authApi.getPreferences);
+  const reportStyle = preferences?.preferred_report_style ?? "motivational";
+  const reportEnabled = preferences?.report_enabled ?? true;
+
+  const updatePreferences = async (data: Partial<UserPreferences>) => {
+    mutate("preferences", { ...(preferences ?? { preferred_report_style: reportStyle, report_enabled: reportEnabled }), ...data }, false);
+    const updated = await authApi.updatePreferences(data);
+    mutate("preferences", updated, false);
+  };
 
   // ── Notifications (local UI only) ──────────────────────────────────────────
   const [mealReminders, setMealReminders] = useState(true);
@@ -212,10 +219,10 @@ export default function ProfilePage() {
         weight_kg: weightKg ? parseFloat(weightKg) : undefined,
         gender: (gender || undefined) as any,
         daily_steps_target: stepsTarget ? parseInt(stepsTarget) : undefined,
-        target_calories: targetCalories ? parseFloat(targetCalories) : undefined,
-        target_protein_g: targetProtein ? parseFloat(targetProtein) : undefined,
-        target_carbs_g: targetCarbs ? parseFloat(targetCarbs) : undefined,
-        target_fat_g: targetFat ? parseFloat(targetFat) : undefined,
+        target_calories: targetCalories ? parseFloat(targetCalories) : (user?.target_calories != null ? null : undefined),
+        target_protein_g: targetProtein ? parseFloat(targetProtein) : (user?.target_protein_g != null ? null : undefined),
+        target_carbs_g: targetCarbs ? parseFloat(targetCarbs) : (user?.target_carbs_g != null ? null : undefined),
+        target_fat_g: targetFat ? parseFloat(targetFat) : (user?.target_fat_g != null ? null : undefined),
       });
       setUser(updated);
       setSaveSuccess(true);
@@ -566,7 +573,7 @@ export default function ProfilePage() {
                 <p className="text-sm font-medium text-text-primary">Daily AI Reports</p>
                 <p className="text-xs text-text-muted mt-0.5">Get personalized insights each day</p>
               </div>
-              <Toggle enabled={reportEnabled} onToggle={() => setReportEnabled(!reportEnabled)} />
+              <Toggle enabled={reportEnabled} onToggle={() => updatePreferences({ report_enabled: !reportEnabled })} />
             </div>
 
             {/* Report style */}
@@ -584,7 +591,7 @@ export default function ProfilePage() {
                       {REPORT_STYLES.map((style) => (
                         <button
                           key={style.value}
-                          onClick={() => setReportStyle(style.value)}
+                          onClick={() => updatePreferences({ preferred_report_style: style.value })}
                           className={cn(
                             "flex items-start gap-2.5 p-3 rounded-xl border text-left transition-all",
                             reportStyle === style.value

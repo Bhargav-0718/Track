@@ -5,7 +5,7 @@ from datetime import date, datetime
 from datetime import timezone as dt_timezone
 from uuid import UUID, uuid4
 
-from app.core.exceptions import ResourceNotFoundError
+from app.core.exceptions import CalorieEstimationError, ResourceNotFoundError
 from app.core.logging import get_logger
 from app.models.correction_event import CorrectionEvent
 from app.models.food_log import FoodLog
@@ -66,6 +66,10 @@ class FoodService:
                 raw_input=data.raw_input or "",
                 user_id=user_id,
             )
+        except CalorieEstimationError:
+            # Needs clarification from the user (e.g. portion + calories) —
+            # let this propagate as a structured 422 instead of a junk log.
+            raise
         except Exception as e:
             logger.warning("estimation_pipeline_failed", error=str(e), raw=data.raw_input)
             fallback = await self.food_repo.create_food_log(
@@ -116,6 +120,7 @@ class FoodService:
         return logs
 
     async def _create_manual_log(self, user_id: UUID, data: FoodLogCreate) -> FoodLog:  # noqa: D102
+        source = EstimationSource.USER_DB if data.from_user_food_item else EstimationSource.MANUAL
         return await self.food_repo.create_food_log(
             user_id=user_id,
             food_name=data.food_name or "Unknown Food",
@@ -129,7 +134,7 @@ class FoodService:
             carbs_g=data.carbs_g,
             fat_g=data.fat_g,
             fiber_g=data.fiber_g,
-            estimation_source=EstimationSource.MANUAL,
+            estimation_source=source,
             confidence_score=1.0,
             confidence_level=ConfidenceLevel.CONFIRMED,
             assumptions=[],

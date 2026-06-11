@@ -30,6 +30,7 @@ class EstimationSource(StrEnum):
     MANUAL = "manual"          # User manually entered values
     PHOTO = "photo"            # Estimated from food photo (Phase 3)
     HEALTH_CONNECT = "health_connect"
+    USER_DB = "user_db"        # Retrieved from the user's own saved food list
 
 
 class ConfidenceLevel(StrEnum):

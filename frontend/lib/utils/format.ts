@@ -73,6 +73,7 @@ export const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
   manual: { label: "Manual", color: "text-zinc-400" },
   photo: { label: "Photo AI", color: "text-purple-400" },
   health_connect: { label: "Health Connect", color: "text-cyan-400" },
+  user_db: { label: "Your Food List", color: "text-emerald-400" },
 };
 
 export function getSourceInfo(source: string) {

@@ -56,7 +56,8 @@ export type EstimationSource =
   | "llm"
   | "manual"
   | "photo"
-  | "health_connect";
+  | "health_connect"
+  | "user_db";
 
 export type ConfidenceLevel = "confirmed" | "estimated" | "uncertain";
 
@@ -98,6 +99,36 @@ export interface FoodLogCreate {
   portion_description?: string;
   portion_grams?: number;
   logged_at?: string;
+  from_user_food_item?: boolean;
+}
+
+// ── Personal Food Database ────────────────────────────────────────────────────
+
+export interface UserFoodItem {
+  id: string;
+  food_name: string;
+  display_name: string;
+  unit_label: string;
+  portion_description: string;
+  calories: number;
+  portion_grams: number | null;
+  protein_g: number | null;
+  carbs_g: number | null;
+  fat_g: number | null;
+  fiber_g: number | null;
+  use_count: number;
+}
+
+export interface UserFoodItemUpsert {
+  food_name: string;
+  unit_label: string;
+  portion_description: string;
+  calories: number;
+  portion_grams?: number;
+  protein_g?: number;
+  carbs_g?: number;
+  fat_g?: number;
+  fiber_g?: number;
 }
 
 export interface DailyFoodSummary {
@@ -165,11 +196,17 @@ export interface CardioActivityInput {
   calories_burned?: number;
 }
 
+export interface StrengthSetInput {
+  reps: number;
+  weight_kg: number;
+}
+
 export interface StrengthExerciseInput {
   name: string;
   sets: number;
   reps: number;
   weight_kg: number;
+  set_details?: StrengthSetInput[];
 }
 
 export interface SectionedWorkoutCreate {
@@ -357,6 +394,11 @@ export interface AnalyticsSummary {
 // ── Daily Reports ─────────────────────────────────────────────────────────────
 
 export type ReportStyle = "motivational" | "analytical" | "brief" | "detailed";
+
+export interface UserPreferences {
+  preferred_report_style: ReportStyle;
+  report_enabled: boolean;
+}
 
 export interface DailyReport {
   id: string;

@@ -147,8 +147,18 @@ class UserService:
             daily_steps_target=data.daily_steps_target,
         )
 
-        # Auto-calculate targets if physical stats were updated
-        if any([data.weight_kg, data.height_cm, data.age, data.activity_level, data.goal]):
+        # A field explicitly sent as `null` means "clear this and re-auto-calculate"
+        fields_set = data.model_fields_set
+        cleared_targets = False
+        for field in ("target_calories", "target_protein_g", "target_carbs_g", "target_fat_g"):
+            if field in fields_set and getattr(data, field) is None:
+                setattr(updated, field, None)
+                cleared_targets = True
+        if cleared_targets:
+            await updated.save()
+
+        # Auto-calculate targets if physical stats were updated, or targets were cleared
+        if any([data.weight_kg, data.height_cm, data.age, data.activity_level, data.goal, cleared_targets]):
             await self._recalculate_targets_if_complete(updated)
 
         logger.info("user_profile_updated", user_id=str(user_id))

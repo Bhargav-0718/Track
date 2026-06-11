@@ -5,14 +5,18 @@ from app.repositories.daily_summary_repository import DailySummaryRepository
 from app.repositories.food_log_repository import FoodLogRepository
 from app.repositories.food_memory_repository import FoodMemoryRepository
 from app.repositories.nutrition_cache_repository import NutritionCacheRepository
+from app.repositories.user_food_item_repository import UserFoodItemRepository
+from app.repositories.user_preference_repository import UserPreferenceRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.workout_log_repository import WorkoutLogRepository
 
 __all__ = [
     "UserRepository",
+    "UserPreferenceRepository",
     "FoodLogRepository",
     "WorkoutLogRepository",
     "FoodMemoryRepository",
+    "UserFoodItemRepository",
     "NutritionCacheRepository",
     "DailySummaryRepository",
     "CheckpointRepository",

@@ -99,6 +99,7 @@ class WorkoutLogSummary(TrackBaseSchema):
     duration_minutes: int
     calories_burned: float | None
     intensity: str
+    exercises: list[dict] = Field(default_factory=list)
 
 
 # ── Sectioned Workout Schemas (3-section UI) ───────────────────────────────────
@@ -119,6 +120,12 @@ class CardioActivityInput(TrackBaseSchema):
     )
 
 
+class StrengthSetInput(TrackBaseSchema):
+    """A single set within a strength exercise."""
+    reps: int = Field(ge=1, le=1000)
+    weight_kg: float = Field(default=0.0, ge=0.0, le=1000.0)
+
+
 class StrengthExerciseInput(TrackBaseSchema):
     """One strength exercise row."""
     name: str = Field(min_length=1, max_length=255)
@@ -127,6 +134,10 @@ class StrengthExerciseInput(TrackBaseSchema):
     weight_kg: float = Field(
         default=0.0, ge=0.0, le=1000.0,
         description="0 for bodyweight exercises"
+    )
+    set_details: list[StrengthSetInput] = Field(
+        default_factory=list,
+        description="Per-set reps/weight breakdown for display purposes"
     )
 
 
@@ -156,4 +167,3 @@ class SectionedWorkoutCreate(TrackBaseSchema):
 
     notes: str | None = Field(default=None, max_length=2000)
     logged_at: datetime | None = Field(default=None)
-    logged_at: datetime | None = None

@@ -21,6 +21,7 @@ from app.core.exceptions import ResourceNotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.daily_report import DailyReport
 from app.repositories.daily_report_repository import DailyReportRepository
+from app.repositories.user_preference_repository import UserPreferenceRepository
 from app.schemas.report import (
     DailyReportResponse,
     DailyReportSummary,
@@ -35,6 +36,7 @@ logger = get_logger(__name__)
 class ReportService:
     def __init__(self) -> None:
         self.report_repo = DailyReportRepository()
+        self.preference_repo = UserPreferenceRepository()
         self.analytics = AnalyticsService()
 
     async def get_or_generate(
@@ -71,7 +73,11 @@ class ReportService:
         metrics = await self.analytics.compute_report_context_metrics(user_id, target_date)
 
         # Resolve report style: request override → user preference → default
-        style = report_style or "motivational"  # Future: load from user.preference
+        if report_style:
+            style = report_style
+        else:
+            preference = await self.preference_repo.get_or_create(user_id)
+            style = preference.preferred_report_style
 
         # Build ReportContext
         ctx = ReportContext(

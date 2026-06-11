@@ -11,6 +11,8 @@ from fastapi import APIRouter, status
 
 from app.api.deps import CurrentUser, CurrentUserID
 from app.schemas.user import AuthResponse, LoginRequest, UserCreate, UserProfile, UserUpdate
+from app.schemas.user_preference import UserPreferenceResponse, UserPreferenceUpdate
+from app.services.user_preference_service import UserPreferenceService
 from app.services.user_service import UserService
 
 router = APIRouter()
@@ -80,3 +82,32 @@ async def update_my_profile(
     """
     service = UserService()
     return await service.update_profile(current_user_id, data)
+
+
+@router.get(
+    "/users/me/preferences",
+    response_model=UserPreferenceResponse,
+    summary="Get current user's AI/report preferences",
+    tags=["users"],
+)
+async def get_my_preferences(
+    current_user_id: CurrentUserID,
+) -> UserPreferenceResponse:
+    """Get the authenticated user's AI report preferences."""
+    service = UserPreferenceService()
+    return await service.get(current_user_id)
+
+
+@router.put(
+    "/users/me/preferences",
+    response_model=UserPreferenceResponse,
+    summary="Update current user's AI/report preferences",
+    tags=["users"],
+)
+async def update_my_preferences(
+    data: UserPreferenceUpdate,
+    current_user_id: CurrentUserID,
+) -> UserPreferenceResponse:
+    """Update the authenticated user's AI report preferences."""
+    service = UserPreferenceService()
+    return await service.update(current_user_id, data)

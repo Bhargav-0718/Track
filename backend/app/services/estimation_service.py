@@ -16,6 +16,7 @@ from app.models.food_memory import FoodMemory
 from app.models.nutrition_cache import NutritionCache
 from app.repositories.food_memory_repository import FoodMemoryRepository
 from app.repositories.nutrition_cache_repository import NutritionCacheRepository
+from app.repositories.user_food_item_repository import UserFoodItemRepository
 from app.schemas.common import ConfidenceLevel, EstimationSource
 from app.services.ai.embedding_service import embed_text
 from app.services.ai.llm_service import FoodParseResult, estimate_nutrition_fallback, parse_food_input
@@ -68,6 +69,7 @@ class EstimationService:
     def __init__(self) -> None:
         self.memory_repo = FoodMemoryRepository()
         self.nutrition_repo = NutritionCacheRepository()
+        self.user_food_item_repo = UserFoodItemRepository()
 
     async def estimate(self, raw_input: str, user_id: UUID) -> list[EstimationResult]:
         """Run the full 3-stage estimation pipeline.
@@ -96,6 +98,23 @@ class EstimationService:
                 return compound
 
         portion_match = estimate_grams_from_description(parse_result.portion_description)
+        if portion_match is None and parse_result.portion_description.strip().lower() == "medium serving":
+            # No portion was specified by the user. Before falling back to the generic
+            # 150g "medium serving" default, check the user's own food list for the
+            # portion they usually log this as (e.g. "roti" -> their saved "1 roti").
+            saved_item = await self.user_food_item_repo.find_latest_for_food(
+                user_id=user_id, food_name=parse_result.food_name
+            )
+            if saved_item:
+                return [self._result_from_user_food_item(saved_item, parse_result)]
+
+            # No saved portion either — we have no idea what portion the user
+            # means and no data of our own to fall back on. Ask instead of guessing.
+            raise CalorieEstimationError(
+                message=f"How much {parse_result.food_name} did you have, and how many calories?",
+                details={"code": "needs_portion_input", "food_name": parse_result.food_name},
+                estimation_stage="portion",
+            )
         portion_grams = portion_match.estimated_grams if portion_match else parse_result.estimated_grams
 
         # Stage 1: Memory
@@ -324,6 +343,27 @@ class EstimationService:
             confidence_level=confidence_level,
             assumptions=assumptions,
             memory_id=memory.id,
+            parse_result=parse_result,
+        )
+
+    def _result_from_user_food_item(
+        self,
+        item: "UserFoodItem",  # noqa: F821 — avoid import cycle, only used for typing
+        parse_result: FoodParseResult,
+    ) -> EstimationResult:
+        return EstimationResult(
+            food_name=item.display_name,
+            portion_description=item.portion_description,
+            portion_grams=item.portion_grams or parse_result.estimated_grams,
+            calories=item.calories,
+            protein_g=item.protein_g,
+            carbs_g=item.carbs_g,
+            fat_g=item.fat_g,
+            fiber_g=item.fiber_g,
+            estimation_source=EstimationSource.USER_DB,
+            confidence_score=1.0,
+            confidence_level=ConfidenceLevel.CONFIRMED,
+            assumptions=[f"Used your saved portion: {item.portion_description}"],
             parse_result=parse_result,
         )
 

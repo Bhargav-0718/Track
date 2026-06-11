@@ -75,6 +75,9 @@ class FoodLogCreate(TrackBaseSchema):
         description="When the food was actually eaten. Defaults to now.",
     )
 
+    # Set when this manual log was selected from the user's saved food portions
+    from_user_food_item: bool = False
+
     @model_validator(mode="after")
     def validate_input_mode(self) -> "FoodLogCreate":
         has_raw = self.raw_input is not None and len(self.raw_input.strip()) > 0

@@ -39,6 +39,7 @@ async def init_db() -> None:
     from app.models.progress_photo import ProgressPhoto
     from app.models.step_log import StepLog
     from app.models.user import User
+    from app.models.user_food_item import UserFoodItem
     from app.models.user_preference import UserPreference
     from app.models.workout_log import WorkoutLog
     from beanie import init_beanie
@@ -64,6 +65,7 @@ async def init_db() -> None:
             StepLog,
             DailyReport,
             BehaviorEvent,
+            UserFoodItem,
         ],
     )
 

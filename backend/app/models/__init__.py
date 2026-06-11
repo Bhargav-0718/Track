@@ -15,6 +15,7 @@ from app.models.progress_checkpoint import ProgressCheckpoint
 from app.models.progress_photo import ProgressPhoto
 from app.models.step_log import StepLog
 from app.models.user import User
+from app.models.user_food_item import UserFoodItem
 from app.models.user_preference import UserPreference
 from app.models.workout_log import WorkoutLog
 
@@ -24,6 +25,7 @@ __all__ = [
     "FoodLog",
     "WorkoutLog",
     "FoodMemory",
+    "UserFoodItem",
     "NutritionCache",
     "DailySummary",
     "CorrectionEvent",

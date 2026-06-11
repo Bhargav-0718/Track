@@ -3,7 +3,7 @@ v1 API router — aggregates all route modules.
 """
 from fastapi import APIRouter
 
-from app.api.v1 import activity, analytics, checkpoints, coach, food_logs, reports, users, workout_logs
+from app.api.v1 import activity, analytics, checkpoints, coach, food_items, food_logs, reports, users, workout_logs
 
 api_router = APIRouter()
 
@@ -12,6 +12,9 @@ api_router.include_router(users.router)
 
 # Food Logs (Phase 1 + 2)
 api_router.include_router(food_logs.router)
+
+# Personal food portion database (autocomplete + saved portions)
+api_router.include_router(food_items.router)
 
 # Workout Logs + Dashboard + Health Connect (Phase 1)
 api_router.include_router(workout_logs.router)
