@@ -352,18 +352,29 @@ function MealGroupCard({ group, onDelete }: { group: MealGroup; onDelete: (id: s
   );
 }
 
+interface FoodRow {
+  id: string;
+  item: string;
+  portion: string;
+  calories: string;
+  suggestions: UserFoodItem[];
+  showSuggestions: boolean;
+}
+function newFoodRow(id: string): FoodRow {
+  return { id, item: "", portion: "", calories: "", suggestions: [], showSuggestions: false };
+}
+
 function FoodTab({ onLogged, onDelete, daily }: {
   onLogged: () => void;
   onDelete: (id: string) => void;
   daily: ReturnType<typeof useSWR<any>>["data"];
 }) {
-  const [query, setQuery] = useState("");
-  const [manualCalories, setManualCalories] = useState("");
+  const [rows, setRows] = useState<FoodRow[]>([newFoodRow("0")]);
+  const [nextId, setNextId] = useState(1);
   const [mealType, setMealType] = useState<MealType>("lunch");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Set when the backend can't guess a portion and has no saved data to fall
   // back on — we ask the user for the portion + calories instead of guessing.
@@ -372,118 +383,124 @@ function FoodTab({ onLogged, onDelete, daily }: {
   const [infoCalories, setInfoCalories] = useState("");
   const [infoSaving, setInfoSaving] = useState(false);
 
-  const [suggestions, setSuggestions] = useState<UserFoodItem[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
-  function handleQueryChange(value: string) {
-    setQuery(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    const trimmed = value.trim();
-    if (trimmed.length < 2) {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      return;
-    }
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const results = await foodItemsApi.search(trimmed);
-        setSuggestions(results);
-        setShowSuggestions(results.length > 0);
-      } catch {
-        setSuggestions([]);
-        setShowSuggestions(false);
-      }
-    }, 300);
+  function addRow() { setRows((r) => [...r, newFoodRow(String(nextId))]); setNextId((n) => n + 1); }
+  function removeRow(id: string) { if (rows.length > 1) setRows((r) => r.filter((row) => row.id !== id)); }
+  function updateRow<K extends keyof Omit<FoodRow, "id">>(id: string, field: K, val: FoodRow[K]) {
+    setRows((r) => r.map((row) => row.id === id ? { ...row, [field]: val } : row));
   }
 
-  async function handleSelectSuggestion(item: UserFoodItem) {
-    if (loading) return;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      await foodApi.createLog({
-        food_name: item.display_name,
-        calories: item.calories,
-        meal_type: mealType,
-        portion_description: item.portion_description,
-        portion_grams: item.portion_grams ?? undefined,
-        protein_g: item.protein_g ?? undefined,
-        carbs_g: item.carbs_g ?? undefined,
-        fat_g: item.fat_g ?? undefined,
-        fiber_g: item.fiber_g ?? undefined,
-        from_user_food_item: true,
-      });
-      setResult(`${item.portion_description} — ${Math.round(item.calories)} kcal logged!`);
-      setQuery("");
-      setSuggestions([]);
-      setShowSuggestions(false);
-      onLogged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to log food");
-    } finally {
-      setLoading(false);
+  function handleItemChange(id: string, value: string) {
+    updateRow(id, "item", value);
+    const existing = debounceRefs.current.get(id);
+    if (existing) clearTimeout(existing);
+    const trimmed = value.trim();
+    if (trimmed.length < 2) {
+      updateRow(id, "suggestions", []);
+      updateRow(id, "showSuggestions", false);
+      return;
     }
+    const timer = setTimeout(async () => {
+      try {
+        const results = await foodItemsApi.search(trimmed);
+        updateRow(id, "suggestions", results);
+        updateRow(id, "showSuggestions", results.length > 0);
+      } catch {
+        updateRow(id, "suggestions", []);
+        updateRow(id, "showSuggestions", false);
+      }
+    }, 300);
+    debounceRefs.current.set(id, timer);
+  }
+
+  function handleSelectSuggestion(id: string, item: UserFoodItem) {
+    setRows((r) => r.map((row) => row.id === id ? {
+      ...row,
+      item: item.display_name,
+      portion: guessUnitLabel(item.portion_description, item.display_name),
+      calories: String(Math.round(item.calories)),
+      suggestions: [],
+      showSuggestions: false,
+    } : row));
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!query.trim() || loading) return;
+    if (loading || !rows.some((r) => r.item.trim())) return;
     setLoading(true);
     setError(null);
     setResult(null);
     setNeedsInfo(null);
-    setShowSuggestions(false);
-    try {
-      const manualKcal = parseFloat(manualCalories);
-      if (manualCalories.trim() && !isNaN(manualKcal) && manualKcal > 0) {
-        // User provided their own calorie count — log it directly, no AI call.
-        const foodName = query.trim();
-        const logs = await foodApi.createLog({
-          food_name: foodName,
-          calories: manualKcal,
-          portion_description: foodName,
-          meal_type: mealType,
-        });
-        setResult(`${logs[0].food_name} — ${Math.round(manualKcal)} kcal logged!`);
 
-        // Save to personal food list so next time it's an autocomplete suggestion.
-        try {
-          await foodItemsApi.upsert({
-            food_name: foodName.toLowerCase(),
-            unit_label: foodName.toLowerCase(),
-            portion_description: foodName,
-            calories: manualKcal,
+    const loggedLabels: string[] = [];
+    let totalKcal = 0;
+    const remaining: FoodRow[] = [];
+    let stopped = false;
+
+    for (const row of rows) {
+      const foodName = row.item.trim();
+      if (!foodName) continue;
+      if (stopped) {
+        remaining.push(row);
+        continue;
+      }
+      const portionDesc = row.portion.trim();
+      const kcal = parseFloat(row.calories);
+      try {
+        if (row.calories.trim() && !isNaN(kcal) && kcal > 0) {
+          // User provided their own calorie count — log it directly, no AI call.
+          const description = portionDesc || foodName;
+          const logs = await foodApi.createLog({
+            food_name: foodName,
+            calories: kcal,
+            portion_description: description,
+            meal_type: mealType,
           });
-        } catch {
-          // best-effort
+          loggedLabels.push(logs[0].food_name);
+          totalKcal += kcal;
+
+          // Save to personal food list so next time it's an autocomplete suggestion.
+          try {
+            await foodItemsApi.upsert({
+              food_name: foodName.toLowerCase(),
+              unit_label: guessUnitLabel(description, foodName),
+              portion_description: description,
+              calories: kcal,
+            });
+          } catch {
+            // best-effort
+          }
+        } else {
+          const rawInput = portionDesc ? `${portionDesc} ${foodName}` : foodName;
+          const logs = await foodApi.createLog({ raw_input: rawInput, meal_type: mealType });
+          for (const l of logs) {
+            loggedLabels.push(l.food_name);
+            totalKcal += l.calories;
+          }
         }
-        setQuery("");
-        setManualCalories("");
-      } else {
-        const logs = await foodApi.createLog({ raw_input: query.trim(), meal_type: mealType });
-        const totalKcal = logs.reduce((s, l) => s + l.calories, 0);
-        const label = logs.length === 1
-          ? logs[0].food_name
-          : logs.map((l) => l.food_name).join(" + ");
-        setResult(`${label} — ${Math.round(totalKcal)} kcal logged!`);
-        setQuery("");
-        setManualCalories("");
+      } catch (err) {
+        const code = (err as ApiError)?.details?.details as { code?: string; food_name?: string } | undefined;
+        if (err instanceof ApiError && code?.code === "needs_portion_input" && code.food_name) {
+          setNeedsInfo({ foodName: code.food_name });
+          setInfoPortion("");
+          setInfoCalories("");
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to log food");
+        }
+        remaining.push(row);
+        stopped = true;
       }
-      onLogged();
-    } catch (err) {
-      const code = (err as ApiError)?.details?.details as { code?: string; food_name?: string } | undefined;
-      if (err instanceof ApiError && code?.code === "needs_portion_input" && code.food_name) {
-        setNeedsInfo({ foodName: code.food_name });
-        setInfoPortion("");
-        setInfoCalories("");
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to log food");
-      }
-    } finally {
-      setLoading(false);
     }
+
+    if (loggedLabels.length) {
+      setResult(`${loggedLabels.join(" + ")} — ${Math.round(totalKcal)} kcal logged!`);
+      onLogged();
+    }
+
+    setRows(remaining.length ? remaining : [newFoodRow(String(nextId))]);
+    if (!remaining.length) setNextId((n) => n + 1);
+    setLoading(false);
   }
 
   async function handleSubmitClarification(e: React.FormEvent) {
@@ -516,8 +533,12 @@ function FoodTab({ onLogged, onDelete, daily }: {
         // best-effort
       }
 
-      setQuery("");
-      setManualCalories("");
+      setRows((prev) => {
+        const idx = prev.findIndex((r) => r.item.trim().toLowerCase() === foodName.toLowerCase());
+        const next = idx >= 0 ? prev.filter((_, i) => i !== idx) : prev;
+        return next.length ? next : [newFoodRow(String(nextId))];
+      });
+      setNextId((n) => n + 1);
       setNeedsInfo(null);
       onLogged();
     } catch (err) {
@@ -530,6 +551,7 @@ function FoodTab({ onLogged, onDelete, daily }: {
   const mealGroups = buildMealGroups(daily?.logs ?? []);
   const groups = groupByMeal(mealGroups);
   const orderedMeals = MEAL_ORDER.filter((m) => groups[m]?.length);
+  const hasAiEstimate = rows.some((r) => r.item.trim() && !r.calories.trim());
 
   return (
     <div className="space-y-6">
@@ -538,7 +560,7 @@ function FoodTab({ onLogged, onDelete, daily }: {
         <div>
           <p className="text-base font-bold">Log Food</p>
           <p className="text-sm text-text-secondary mt-0.5">
-            Describe what you ate — AI estimates nutrition automatically.
+            Add each item separately — leave kcal blank to let AI estimate it.
           </p>
         </div>
 
@@ -560,77 +582,86 @@ function FoodTab({ onLogged, onDelete, daily }: {
           ))}
         </div>
 
-        {/* Text input */}
         <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="relative">
-            <textarea
-              ref={inputRef}
-              rows={3}
-              value={query}
-              onChange={(e) => handleQueryChange(e.target.value)}
-              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-              placeholder='e.g. "2 rotis with dal and sabzi" or "protein shake 30g"'
-              className="w-full bg-surface border border-border rounded-xl
-                         px-4 py-3 text-sm text-text-primary resize-none
-                         placeholder:text-text-muted
-                         focus:outline-none focus:border-emerald-500/50
-                         transition-all duration-200"
-              disabled={loading}
-            />
+          <div className="space-y-2">
+            {/* Column headers */}
+            <div className="flex gap-2 px-1">
+              <p className="flex-[5] text-[11px] text-text-muted">Item</p>
+              <p className="flex-[3] text-center text-[11px] text-text-muted">Portion</p>
+              <p className="w-16 text-center text-[11px] text-text-muted">kcal (opt)</p>
+              <div className="w-7" />
+            </div>
 
-            {/* Saved-portion autocomplete */}
-            <AnimatePresence>
-              {showSuggestions && (
-                <motion.div
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  className="absolute z-10 left-0 right-0 top-full mt-1.5 card-surface
-                             border border-border overflow-hidden"
-                >
-                  <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide px-3 pt-2">
-                    From your food list
-                  </p>
-                  <div className="max-h-56 overflow-y-auto py-1">
-                    {suggestions.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onMouseDown={() => handleSelectSuggestion(item)}
-                        className="w-full flex items-center justify-between gap-2 px-3 py-2
-                                   hover:bg-surface-elevated transition-colors text-left"
-                      >
-                        <span className="text-sm text-text-primary capitalize truncate">
-                          {item.portion_description}
-                        </span>
-                        <span className="text-xs font-semibold tabular-nums text-text-secondary shrink-0">
-                          {Math.round(item.calories)} kcal
-                        </span>
-                      </button>
-                    ))}
+            <AnimatePresence initial={false}>
+              {rows.map((row) => (
+                <motion.div key={row.id}
+                  initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.15 }}
+                  className="flex gap-2 items-start">
+                  <div className="relative flex-[5]">
+                    <input
+                      value={row.item}
+                      onChange={(e) => handleItemChange(row.id, e.target.value)}
+                      onFocus={() => row.suggestions.length > 0 && updateRow(row.id, "showSuggestions", true)}
+                      onBlur={() => setTimeout(() => updateRow(row.id, "showSuggestions", false), 150)}
+                      placeholder="Roti, Dal, Poha…"
+                      disabled={loading}
+                      className="w-full bg-surface border border-border rounded-xl px-3 py-2.5 text-sm text-text-primary
+                                 placeholder:text-text-muted focus:outline-none focus:border-emerald-500/50 transition-all"
+                    />
+                    {/* Saved-portion autocomplete */}
+                    <AnimatePresence>
+                      {row.showSuggestions && row.suggestions.length > 0 && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -4 }}
+                          className="absolute z-10 left-0 right-0 top-full mt-1.5 card-surface
+                                     border border-border overflow-hidden"
+                        >
+                          <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide px-3 pt-2">
+                            From your food list
+                          </p>
+                          <div className="max-h-56 overflow-y-auto py-1">
+                            {row.suggestions.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                onMouseDown={() => handleSelectSuggestion(row.id, item)}
+                                className="w-full flex items-center justify-between gap-2 px-3 py-2
+                                           hover:bg-surface-elevated transition-colors text-left"
+                              >
+                                <span className="text-sm text-text-primary capitalize truncate">
+                                  {item.portion_description}
+                                </span>
+                                <span className="text-xs font-semibold tabular-nums text-text-secondary shrink-0">
+                                  {Math.round(item.calories)} kcal
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
+                  <FieldInput value={row.portion} onChange={(v) => updateRow(row.id, "portion", v)}
+                    placeholder="1 bowl, 1 plate…" className="flex-[3] text-center" />
+                  <FieldInput value={row.calories} onChange={(v) => updateRow(row.id, "calories", v)}
+                    placeholder="—" type="number" className="w-16 text-center" />
+                  <button type="button" onClick={() => removeRow(row.id)}
+                    className={cn("w-7 h-7 mt-0.5 flex items-center justify-center rounded-lg transition-colors shrink-0",
+                      rows.length === 1 ? "opacity-20 cursor-not-allowed" : "text-text-muted hover:text-red-400"
+                    )} disabled={rows.length === 1}>
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </motion.div>
-              )}
+              ))}
             </AnimatePresence>
-          </div>
 
-          {/* Optional manual calorie entry — skips the AI call when provided */}
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={manualCalories}
-              onChange={(e) => setManualCalories(e.target.value)}
-              placeholder="kcal (optional)"
-              min={0}
-              className="w-32 bg-surface border border-border rounded-xl px-3 py-2
-                         text-sm text-text-primary tabular-nums placeholder:text-text-muted
-                         focus:outline-none focus:border-emerald-500/50 transition-all"
-              disabled={loading}
-            />
-            <p className="text-[11px] text-text-muted flex-1">
-              Know the calories? Enter them to skip AI and save to your food list.
-            </p>
+            <button type="button" onClick={addRow}
+              className="flex items-center gap-1.5 text-emerald-400 text-[13px] font-medium hover:text-emerald-300 transition-colors py-1">
+              <Plus className="w-4 h-4" /> Add item
+            </button>
           </div>
 
           {/* Success */}
@@ -654,7 +685,7 @@ function FoodTab({ onLogged, onDelete, daily }: {
             )}
           </AnimatePresence>
 
-          {/* Needs clarification — no saved portion or known piece weight to fall back on */}
+          {/* Needs clarification — no saved portion to fall back on */}
           <AnimatePresence>
             {needsInfo && (
               <motion.div
@@ -704,7 +735,7 @@ function FoodTab({ onLogged, onDelete, daily }: {
 
           <button
             type="submit"
-            disabled={loading || !query.trim()}
+            disabled={loading || !rows.some((r) => r.item.trim())}
             className="w-full py-3 rounded-xl bg-emerald-500 text-white text-sm font-semibold
                        hover:bg-emerald-600 transition-colors disabled:opacity-40
                        flex items-center justify-center gap-2"
@@ -713,8 +744,8 @@ function FoodTab({ onLogged, onDelete, daily }: {
               ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               : <Sparkles className="w-4 h-4" />}
             {loading
-              ? (manualCalories.trim() ? "Logging…" : "Estimating…")
-              : (manualCalories.trim() ? "Log" : "Estimate & Log")}
+              ? (hasAiEstimate ? "Estimating…" : "Logging…")
+              : (hasAiEstimate ? "Estimate & Log" : "Log Items")}
           </button>
         </form>
       </div>

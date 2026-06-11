@@ -98,24 +98,30 @@ class EstimationService:
                 return compound
 
         portion_match = estimate_grams_from_description(parse_result.portion_description)
-        if portion_match is None and parse_result.portion_description.strip().lower() == "medium serving":
-            # No portion was specified by the user. Before falling back to the generic
-            # 150g "medium serving" default, check the user's own food list for the
-            # portion they usually log this as (e.g. "roti" -> their saved "1 roti").
-            saved_item = await self.user_food_item_repo.find_latest_for_food(
-                user_id=user_id, food_name=parse_result.food_name
-            )
-            if saved_item:
-                return [self._result_from_user_food_item(saved_item, parse_result)]
+        no_portion_specified = (
+            portion_match is None and parse_result.portion_description.strip().lower() == "medium serving"
+        )
+        portion_grams = portion_match.estimated_grams if portion_match else parse_result.estimated_grams
 
-            # No saved portion either — we have no idea what portion the user
-            # means and no data of our own to fall back on. Ask instead of guessing.
+        # Stage 0: Personal food DB — when the user hasn't given us calories,
+        # check their own saved foods before ever calling the LLM.
+        saved_item = await self.user_food_item_repo.find_latest_for_food(
+            user_id=user_id, food_name=parse_result.food_name
+        )
+        if saved_item:
+            if no_portion_specified:
+                return [self._result_from_user_food_item(saved_item, parse_result)]
+            if saved_item.portion_grams:
+                return [self._result_from_user_food_item_scaled(saved_item, portion_grams, parse_result)]
+
+        if no_portion_specified:
+            # No portion was specified and no saved portion to fall back on —
+            # we have no idea what portion the user means. Ask instead of guessing.
             raise CalorieEstimationError(
                 message=f"How much {parse_result.food_name} did you have, and how many calories?",
                 details={"code": "needs_portion_input", "food_name": parse_result.food_name},
                 estimation_stage="portion",
             )
-        portion_grams = portion_match.estimated_grams if portion_match else parse_result.estimated_grams
 
         # Stage 1: Memory
         memory_result = await self._search_memory(user_id=user_id, parse_result=parse_result)
@@ -364,6 +370,31 @@ class EstimationService:
             confidence_score=1.0,
             confidence_level=ConfidenceLevel.CONFIRMED,
             assumptions=[f"Used your saved portion: {item.portion_description}"],
+            parse_result=parse_result,
+        )
+
+    def _result_from_user_food_item_scaled(
+        self,
+        item: "UserFoodItem",  # noqa: F821 — avoid import cycle, only used for typing
+        portion_grams: float,
+        parse_result: FoodParseResult,
+    ) -> EstimationResult:
+        """Scale a saved portion (e.g. "1 roti" = 70 kcal / 30g) to a different
+        portion size the user specified (e.g. "3 rotis" -> 210 kcal / 90g)."""
+        scale = portion_grams / item.portion_grams
+        return EstimationResult(
+            food_name=item.display_name,
+            portion_description=parse_result.portion_description,
+            portion_grams=portion_grams,
+            calories=round(item.calories * scale, 1),
+            protein_g=round(item.protein_g * scale, 1) if item.protein_g else None,
+            carbs_g=round(item.carbs_g * scale, 1) if item.carbs_g else None,
+            fat_g=round(item.fat_g * scale, 1) if item.fat_g else None,
+            fiber_g=round(item.fiber_g * scale, 1) if item.fiber_g else None,
+            estimation_source=EstimationSource.USER_DB,
+            confidence_score=1.0,
+            confidence_level=ConfidenceLevel.CONFIRMED,
+            assumptions=[f"Scaled from your saved {item.portion_description} ({item.calories:.0f} kcal)"],
             parse_result=parse_result,
         )
 
